@@ -2,11 +2,11 @@ import Foundation
 import Security
 
 enum KeychainKey: String, CaseIterable, Codable {
-    case openAIAPIKey = "openAIAPIKey"
+    case openRouterAPIKey = "openRouterAPIKey"
 
     var label: String {
         switch self {
-        case .openAIAPIKey: return "OpenAI API Key"
+        case .openRouterAPIKey: return "OpenRouter API Key"
         }
     }
 }
@@ -67,7 +67,7 @@ enum KeychainService {
     }
 
     static var isConfigured: Bool {
-        load(key: .openAIAPIKey) != nil
+        load(key: .openRouterAPIKey) != nil
     }
 
     private static func baseQuery(for key: KeychainKey) -> [String: Any] {

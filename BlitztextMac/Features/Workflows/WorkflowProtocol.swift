@@ -37,7 +37,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
 
     var subtitle: String {
         switch self {
-        case .transcription: return "Sprache rein. Text raus."
+        case .transcription: return "Sprechen. Sauber formatiert raus."
         case .localTranscription: return "Nur lokal. Kein Server."
         case .textImprover: return "Geschrieben sprechen."
         case .dampfAblassen: return "Frust rein. Entspannt raus."
@@ -47,7 +47,7 @@ enum WorkflowType: String, CaseIterable, Identifiable, Codable {
 
     var hotkeyLabel: String {
         switch self {
-        case .transcription: return "fn + Shift"
+        case .transcription: return "fn + Leertaste"
         case .localTranscription: return "fn + Shift + Ctrl"
         case .textImprover: return "fn + Control"
         case .dampfAblassen: return "fn + Option"
@@ -117,24 +117,36 @@ protocol Workflow: AnyObject, Observable {
 // MARK: - App Settings
 
 struct AppSettings: Codable {
-    var hotkeyMode: HotkeyMode = .hold
+    var hotkeyMode: HotkeyMode = .toggle
     var hasSeenOnboarding: Bool = false
     var secureLocalModeEnabled: Bool = false
     var selectedLocalTranscriptionModelName: String = LocalTranscriptionService.recommendedFastModelName
     var hasAutoSelectedFastLocalModel: Bool = false
+    /// OpenRouter Whisper model id used for transcription (user-selectable).
+    var transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel
+    /// OpenRouter Llama model id used for the smart formatting / rewrites.
+    var formattingModel: String = OpenRouterConfig.defaultFormattingModel
+    /// When on, the main dictation hotkey runs the Llama smart formatting after transcription.
+    var smartFormattingEnabled: Bool = true
 
     init(
-        hotkeyMode: HotkeyMode = .hold,
+        hotkeyMode: HotkeyMode = .toggle,
         hasSeenOnboarding: Bool = false,
         secureLocalModeEnabled: Bool = false,
         selectedLocalTranscriptionModelName: String = LocalTranscriptionService.recommendedFastModelName,
-        hasAutoSelectedFastLocalModel: Bool = false
+        hasAutoSelectedFastLocalModel: Bool = false,
+        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
+        formattingModel: String = OpenRouterConfig.defaultFormattingModel,
+        smartFormattingEnabled: Bool = true
     ) {
         self.hotkeyMode = hotkeyMode
         self.hasSeenOnboarding = hasSeenOnboarding
         self.secureLocalModeEnabled = secureLocalModeEnabled
         self.selectedLocalTranscriptionModelName = selectedLocalTranscriptionModelName
         self.hasAutoSelectedFastLocalModel = hasAutoSelectedFastLocalModel
+        self.transcriptionModel = transcriptionModel
+        self.formattingModel = formattingModel
+        self.smartFormattingEnabled = smartFormattingEnabled
     }
 
     enum CodingKeys: String, CodingKey {
@@ -143,11 +155,15 @@ struct AppSettings: Codable {
         case secureLocalModeEnabled
         case selectedLocalTranscriptionModelName
         case hasAutoSelectedFastLocalModel
+        case transcriptionModel
+        case formattingModel
+        case smartFormattingEnabled
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        hotkeyMode = try container.decodeIfPresent(HotkeyMode.self, forKey: .hotkeyMode) ?? .hold
+        // Old builds may have stored a now-removed mode ("hold"); fall back to toggle.
+        hotkeyMode = (try? container.decodeIfPresent(HotkeyMode.self, forKey: .hotkeyMode)) ?? .toggle
         hasSeenOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasSeenOnboarding) ?? false
         secureLocalModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .secureLocalModeEnabled) ?? false
         selectedLocalTranscriptionModelName = try container.decodeIfPresent(
@@ -158,6 +174,17 @@ struct AppSettings: Codable {
             Bool.self,
             forKey: .hasAutoSelectedFastLocalModel
         ) ?? false
+        let storedTranscription = ((try? container.decodeIfPresent(String.self, forKey: .transcriptionModel)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        transcriptionModel = (storedTranscription?.isEmpty == false)
+            ? storedTranscription!
+            : OpenRouterConfig.defaultTranscriptionModel
+        let storedFormatting = ((try? container.decodeIfPresent(String.self, forKey: .formattingModel)) ?? nil)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        formattingModel = (storedFormatting?.isEmpty == false)
+            ? storedFormatting!
+            : OpenRouterConfig.defaultFormattingModel
+        smartFormattingEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartFormattingEnabled) ?? true
     }
 }
 

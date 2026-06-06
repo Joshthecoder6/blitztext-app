@@ -2,25 +2,35 @@
 
 Blitztext App is an experimental open-source macOS menubar app for turning speech into text.
 
-It is intentionally small and unfinished. The goal is to make a real workflow visible and hackable: press a hotkey, speak, get text back, optionally rewrite it, and paste it into the app you were using.
+It is intentionally small and unfinished. The goal is to make a real workflow visible and hackable: press a hotkey, speak, get clean text back, and paste it into the app you were using.
 
 This is a learning and experimentation project, not a polished product.
 
-> Preview status: bring your own OpenAI API key, no hosted backend, no warranty, no support guarantee.
+> Preview status: bring your own OpenRouter API key, no hosted backend, no warranty, no support guarantee.
 
 ## What It Does
 
-- **Blitztext**: record speech and transcribe it.
-- **Blitztext+**: record speech, transcribe it, then turn the rough draft into cleaner writing.
+Press **fn + Leertaste (Space)** once to start dictating and again to stop. Blitztext then:
+
+1. Transcribes your speech with an **OpenRouter-hosted Whisper model** (`openai/whisper-large-v3-turbo`).
+2. Cleans the rough transcript with a **Llama** model — Wispr-Flow style: it applies spoken corrections ("no, scratch that"), detects and formats lists, turns spoken formatting commands ("new paragraph") into real formatting, and removes filler words.
+3. Pastes the finished text into the app you were using.
+
+The menu bar also keeps a few manual workflows (all on OpenRouter/Llama):
+
+- **Blitztext**: smart dictation (transcribe + clean formatting). This is the fn + Leertaste hotkey.
+- **Blitztext+**: transcribe, then turn the rough draft into cleaner writing.
 - **Blitztext $%&!**: turn frustrated speech into a calmer message.
 - **Blitztext :)**: add fitting emojis to dictated text.
+
+Enabling **Sicherer Lokaler Modus** switches the main hotkey to fully local transcription via WhisperKit (no server, no Llama formatting).
 
 ## Important Preview Notes
 
 - macOS only.
-- Bring your own OpenAI API key.
+- Bring your own OpenRouter API key (create one at https://openrouter.ai/keys).
 - No hosted Blitztext backend is included or provided.
-- In online mode, audio and text are sent directly from the app to the OpenAI API.
+- In online mode, audio and text are sent directly from the app to the OpenRouter API.
 - Optional local transcription via WhisperKit/CoreML if you install a compatible model locally.
 - `./build.sh` creates a locally ad-hoc-signed development app. No notarized release binary is provided.
 - Not production ready.
@@ -48,9 +58,10 @@ The intent is not to ship a one-click finished app. The intent is to make a real
 - macOS 14 or newer
 - Xcode 16 or newer (Swift 5.10), with Command Line Tools installed and selected for `xcodebuild`
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the Xcode project
-- For online transcription and rewriting: an OpenAI API key with access to:
-  - `whisper-1` for transcription
-  - `gpt-4o-mini` and optionally `gpt-4o` for rewriting
+- For online transcription and rewriting: an OpenRouter API key (https://openrouter.ai/keys). The defaults are:
+  - `openai/whisper-large-v3-turbo` for transcription
+  - `meta-llama/llama-3.3-70b-instruct` for smart formatting / rewriting
+  - Both model IDs are editable in the app under Settings → Anpassen → Modelle.
 - For local-only transcription: a WhisperKit CoreML model in:
   `~/Library/Application Support/Blitztext/models/whisperkit/`
 
@@ -67,8 +78,8 @@ brew install xcodegen
 ## Build And Run
 
 ```bash
-git clone https://github.com/cmagnussen/blitztext-app.git
-cd blitztext-app
+git clone https://github.com/Joshthecoder6/blitztext-openrouter.git
+cd blitztext-openrouter
 ./build.sh --run
 ```
 
@@ -80,7 +91,7 @@ For a local install into `/Applications`:
 
 The generated `.app` is ad-hoc signed for local development only. Do not treat it as a trusted redistributable binary. A public binary release would need Developer ID signing and notarization.
 
-On first launch, either paste your own OpenAI API key for online workflows or install a WhisperKit CoreML model for local transcription. Rewriting workflows still require OpenAI.
+On first launch, either paste your own OpenRouter API key for online workflows or install a WhisperKit CoreML model for local transcription. Smart formatting and the rewriting workflows require OpenRouter (Llama).
 
 For fully local transcription, install a WhisperKit CoreML model and enable **Sicherer Lokaler Modus** in the app.
 
@@ -91,9 +102,9 @@ For a slower, more explicit walkthrough, see [docs/setup.md](docs/setup.md).
 Blitztext asks for:
 
 - **Microphone**: to record your voice.
-- **Accessibility**: to paste the result back into the app you were using.
+- **Accessibility**: to paste the result back into the app you were using **and** to run the global **fn + Leertaste** hotkey (it uses a `CGEventTap`, which needs Accessibility). The hotkey consumes the Space press so it is not typed into your document.
 
-If you do not grant Accessibility permission, you can still copy results manually.
+If you do not grant Accessibility permission, the global hotkey will not work; you can still start workflows from the menu and copy results manually.
 
 Full Disk Access is not required. If auto-paste does not work even though transcription succeeds, open **System Settings -> Privacy & Security -> Accessibility**, enable Blitztext there, restart Blitztext, and try again with the cursor focused in a text field. If macOS shows multiple Blitztext entries, remove or disable the old ones and grant the permission to the app you just built or installed.
 
@@ -102,12 +113,12 @@ Full Disk Access is not required. If auto-paste does not work even though transc
 The preview has no custom backend.
 
 ```text
-Online transcription: Your Mac -> OpenAI Audio Transcriptions API
-Text rewriting:       Your Mac -> OpenAI Chat Completions API
-Local transcription:  Your Mac -> WhisperKit/CoreML on device
+Online transcription: Your Mac -> OpenRouter Audio Transcriptions API (Whisper)
+Smart formatting:      Your Mac -> OpenRouter Chat Completions API (Llama)
+Local transcription:   Your Mac -> WhisperKit/CoreML on device
 ```
 
-The app stores your OpenAI API key in the user's macOS Keychain.
+The app stores your OpenRouter API key in the user's macOS Keychain.
 
 Read [docs/privacy.md](docs/privacy.md) before using the preview with sensitive content.
 

@@ -1,131 +1,167 @@
 import Cocoa
 import Observation
 
+/// Hotkey mode is kept for settings compatibility, but all hotkeys work as a
+/// toggle: press once to start, press again to stop.
 enum HotkeyMode: String, Codable, CaseIterable, Identifiable {
-    case hold    // Tasten halten = aufnehmen, loslassen = stoppen
-    case toggle  // Einmal drücken = starten, nochmal/Escape = stoppen
+    case toggle
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .hold: return "Halten"
         case .toggle: return "Drücken"
         }
     }
 
     var description: String {
         switch self {
-        case .hold: return "Tasten halten zum Aufnehmen, loslassen zum Stoppen"
-        case .toggle: return "Einmal drücken zum Starten, nochmal oder Escape zum Stoppen"
+        case .toggle: return "Einmal drücken zum Starten, nochmal drücken oder Escape zum Stoppen"
         }
     }
 }
 
 enum HotkeyEvent {
-    case down(WorkflowType)  // Keys pressed
-    case up(WorkflowType)    // Keys released (for hold mode)
-    case cancel              // Escape pressed
+    case toggle(WorkflowType)   // a hotkey combo was pressed -> toggle that workflow
+    case cancel                 // Escape pressed
 }
 
-@Observable
-@MainActor
+/// Global hotkeys via a single `CGEventTap`.
+///
+/// - **fn + Leertaste (Space)** toggles the main dictation. The space keypress is
+///   consumed so it is not typed into the focused field.
+/// - **fn + modifier** combos toggle the secondary workflows (these are pure
+///   modifiers, so they are passed through, not consumed):
+///   `fn+Ctrl` → Blitztext+, `fn+Option` → $%&!, `fn+Cmd` → :), `fn+Shift+Ctrl` → Lokal.
+///
+/// Creating the tap requires Accessibility permission, which the app guides the
+/// user to grant. If the tap cannot be created, `isActive` stays `false`.
 final class HotkeyService {
-    private var globalMonitor: Any?
-    private var localMonitor: Any?
-    private var keyMonitor: Any?
-    private var activeCombo: WorkflowType?  // Which combo is currently held
+    /// Virtual keycode for the Space bar (Leertaste).
+    static let toggleKeyCode: Int64 = 49
+    /// Virtual keycode for Escape.
+    private static let escapeKeyCode: Int64 = 53
 
     var onHotkeyEvent: ((HotkeyEvent) -> Void)?
+    private(set) var isActive = false
+
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    /// Modifier combo currently held, so each press fires exactly one toggle.
+    private var activeCombo: WorkflowType?
 
     func start() {
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            Task { @MainActor in
-                self?.handleFlags(event)
+        guard eventTap == nil else {
+            if let eventTap, !CGEvent.tapIsEnabled(tap: eventTap) {
+                CGEvent.tapEnable(tap: eventTap, enable: true)
             }
+            return
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-            Task { @MainActor in
-                self?.handleFlags(event)
-            }
-            return event
+
+        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
+            guard let refcon else { return Unmanaged.passUnretained(event) }
+            let service = Unmanaged<HotkeyService>.fromOpaque(refcon).takeUnretainedValue()
+            return service.handle(type: type, event: event)
         }
-        // Escape key monitor for toggle mode
-        keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            Task { @MainActor in
-                if event.keyCode == 53 { // Escape
-                    self?.handleEscape()
-                }
-            }
+
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(mask),
+            callback: callback,
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            isActive = false
+            return
         }
+
+        eventTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        isActive = true
     }
 
     func stop() {
-        if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
-        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        globalMonitor = nil
-        localMonitor = nil
-        keyMonitor = nil
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+        }
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        }
+        runLoopSource = nil
+        eventTap = nil
+        isActive = false
     }
 
-    private func handleFlags(_ event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    // MARK: - Event Handling
 
-        // fn + Shift + Control -> local transcription
-        if flags == [.function, .shift, .control] {
-            if activeCombo == nil {
-                activeCombo = .localTranscription
-                onHotkeyEvent?(.down(.localTranscription))
+    /// Runs on the main run loop thread (the tap is added to the main run loop).
+    private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let eventTap {
+                CGEvent.tapEnable(tap: eventTap, enable: true)
             }
-            return
+            return Unmanaged.passUnretained(event)
         }
 
-        // fn + Shift -> transcription
-        if flags == [.function, .shift] {
-            if activeCombo == nil {
-                activeCombo = .transcription
-                onHotkeyEvent?(.down(.transcription))
-            }
-            return
+        if type == .flagsChanged {
+            handleFlags(event.flags)
+            return Unmanaged.passUnretained(event)
         }
 
-        // fn + Control -> Textverbesserer
-        if flags == [.function, .control] {
-            if activeCombo == nil {
-                activeCombo = .textImprover
-                onHotkeyEvent?(.down(.textImprover))
-            }
-            return
+        guard type == .keyDown else {
+            return Unmanaged.passUnretained(event)
         }
 
-        // fn + Option -> Rage Mode
-        if flags == [.function, .option] {
-            if activeCombo == nil {
-                activeCombo = .dampfAblassen
-                onHotkeyEvent?(.down(.dampfAblassen))
-            }
-            return
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let hasFn = event.flags.contains(.maskSecondaryFn)
+
+        if keyCode == Self.toggleKeyCode && hasFn {
+            emit(.toggle(.transcription))
+            return nil // consume so the space is not typed into the focused app
         }
 
-        // fn + Command -> Emoji Mode
-        if flags == [.function, .command] {
-            if activeCombo == nil {
-                activeCombo = .emojiText
-                onHotkeyEvent?(.down(.emojiText))
-            }
-            return
+        if keyCode == Self.escapeKeyCode {
+            emit(.cancel)
+            // Let Escape pass through to the focused app as usual.
         }
 
-        // Keys released -- fire up event
-        if let combo = activeCombo {
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func handleFlags(_ flags: CGEventFlags) {
+        if let combo = workflow(for: flags) {
+            if activeCombo == nil {
+                activeCombo = combo
+                emit(.toggle(combo))
+            }
+        } else {
             activeCombo = nil
-            onHotkeyEvent?(.up(combo))
         }
     }
 
-    private func handleEscape() {
-        activeCombo = nil
-        onHotkeyEvent?(.cancel)
+    /// Maps a pure modifier combo to its workflow (Space is handled separately).
+    private func workflow(for flags: CGEventFlags) -> WorkflowType? {
+        let relevant: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand, .maskSecondaryFn]
+        let mods = flags.intersection(relevant)
+
+        if mods == [.maskSecondaryFn, .maskShift, .maskControl] { return .localTranscription }
+        if mods == [.maskSecondaryFn, .maskControl] { return .textImprover }
+        if mods == [.maskSecondaryFn, .maskAlternate] { return .dampfAblassen }
+        if mods == [.maskSecondaryFn, .maskCommand] { return .emojiText }
+        return nil
+    }
+
+    private func emit(_ event: HotkeyEvent) {
+        // The tap runs on the main run loop; the handler hops to the main actor itself.
+        onHotkeyEvent?(event)
+    }
+
+    deinit {
+        stop()
     }
 }

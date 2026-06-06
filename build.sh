@@ -87,6 +87,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/BlitztextMac"
 PROJECT_FILE="$PROJECT_DIR/BlitztextMac.xcodeproj"
 DERIVED_DATA_PATH="$SCRIPT_DIR/.derivedData-blitztextmac-build"
+ENTITLEMENTS_FILE="$PROJECT_DIR/Resources/BlitztextMac.entitlements"
+
+# Optional stable signing identity. Set BLITZTEXT_SIGN_IDENTITY to a code-signing
+# identity (e.g. an "Apple Development: ..." hash) so the app keeps a stable code
+# identity across rebuilds -> macOS permissions (Microphone, Accessibility) stay
+# granted instead of resetting on every build. Defaults to ad-hoc ("-").
+SIGN_IDENTITY="${BLITZTEXT_SIGN_IDENTITY:--}"
+
+sign_app() {
+    local target="$1"
+    if [ "$SIGN_IDENTITY" = "-" ]; then
+        echo "🔏 Signiere ad-hoc (nicht notarisiert, Rechte zuruecksetzbar bei Rebuild)."
+        codesign --force --sign - "$target" 2>&1
+    else
+        echo "🔏 Signiere mit stabiler Identitaet: $SIGN_IDENTITY (Hardened Runtime + Entitlements)."
+        codesign --force --options runtime --entitlements "$ENTITLEMENTS_FILE" --sign "$SIGN_IDENTITY" "$target" 2>&1
+    fi
+}
+
 cd "$PROJECT_DIR"
 
 ensure_xcodebuild_available
@@ -138,8 +157,7 @@ cp -f "$PROJECT_DIR/Resources/menubar_icon@2x.png" "$RESOURCES_DIR/" 2>/dev/null
 DEST="$SCRIPT_DIR/Blitztext.app"
 rm -rf "$DEST"
 cp -R "$APP_PATH" "$DEST"
-echo "🔏 Signiere lokale Development-App ad-hoc. Dieses Artefakt ist nicht notarisiert."
-codesign --force --sign - "$DEST" 2>&1
+sign_app "$DEST"
 verify_universal_app "$DEST"
 
 RUN_TARGET="$DEST"
@@ -154,8 +172,7 @@ if [ "$INSTALL_APP" = true ]; then
     fi
     rm -rf "$INSTALL_DEST"
     cp -R "$DEST" "$INSTALL_DEST"
-    echo "🔏 Signiere lokale Development-App ad-hoc. Dieses Artefakt ist nicht notarisiert."
-    codesign --force --sign - "$INSTALL_DEST" 2>&1
+    sign_app "$INSTALL_DEST"
     verify_universal_app "$INSTALL_DEST"
     RUN_TARGET="$INSTALL_DEST"
 fi

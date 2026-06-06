@@ -130,7 +130,7 @@ struct MenuBarView: View {
                     .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(appState.appSettings.secureLocalModeEnabled ? "Sicherer lokaler Modus" : "Online Whisper")
+                    Text(appState.appSettings.secureLocalModeEnabled ? "Sicherer lokaler Modus" : "Online (OpenRouter)")
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(.primary)
 
@@ -223,7 +223,9 @@ struct MenuBarView: View {
             return "\(appState.selectedLocalModelDisplayName) ist noch nicht installiert."
         }
 
-        return "Blitztext nutzt gerade die OpenAI-Transkription."
+        return appState.appSettings.smartFormattingEnabled
+            ? "Whisper + Llama-Formatierung über OpenRouter."
+            : "Whisper über OpenRouter."
     }
 
     private var accessibilityHintBanner: some View {
@@ -351,7 +353,7 @@ struct MenuBarView: View {
                         Text("Einmal einrichten, dann direkt loslegen.")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)
-                        Text("Eigenen OpenAI API Key eintragen. Danach sprechen und einfügen.")
+                        Text("Eigenen OpenRouter API Key eintragen. Danach mit fn + Leertaste sprechen und einfügen.")
                             .font(.system(size: 11.5))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -363,9 +365,9 @@ struct MenuBarView: View {
                         onboardingInstallCard
                     }
 
-                    onboardingStep(number: "1", title: "OpenAI Key speichern", detail: "Öffne die Einstellungen und trage deinen eigenen OpenAI API Key ein.")
-                    onboardingStep(number: "2", title: "Berechtigungen erlauben", detail: "Mikrofon und Bedienungshilfen für das Einfügen freigeben.")
-                    onboardingStep(number: "3", title: "Workflow wählen", detail: "Blitztext oder einen der Verbesserer-Workflows direkt aus der Menüleiste starten.")
+                    onboardingStep(number: "1", title: "OpenRouter Key speichern", detail: "Öffne die Einstellungen und trage deinen eigenen OpenRouter API Key ein (openrouter.ai/keys).")
+                    onboardingStep(number: "2", title: "Berechtigungen erlauben", detail: "Mikrofon und Bedienungshilfen freigeben – Bedienungshilfen braucht es auch für das Tastenkürzel.")
+                    onboardingStep(number: "3", title: "fn + Leertaste drücken", detail: "Einmal drücken zum Sprechen, nochmal zum Beenden. Der Text wird formatiert und eingefügt.")
                 }
 
                 HStack(spacing: 8) {

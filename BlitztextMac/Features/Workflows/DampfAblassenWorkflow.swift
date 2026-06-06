@@ -16,12 +16,22 @@ final class DampfAblassenWorkflow: Workflow {
     private let settings: DampfAblassenSettings
     private let customTerms: [String]
     private let language: String
+    private let transcriptionModel: String
+    private let formattingModel: String
     private var processingTask: Task<Void, Never>?
 
-    init(settings: DampfAblassenSettings, customTerms: [String] = [], language: String = "de") {
+    init(
+        settings: DampfAblassenSettings,
+        customTerms: [String] = [],
+        language: String = "de",
+        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
+        formattingModel: String = OpenRouterConfig.defaultFormattingModel
+    ) {
         self.settings = settings
         self.customTerms = customTerms
         self.language = language
+        self.transcriptionModel = transcriptionModel
+        self.formattingModel = formattingModel
     }
 
     // MARK: - Recording State
@@ -86,7 +96,8 @@ final class DampfAblassenWorkflow: Workflow {
                 let rawText = try await TranscriptionService.transcribe(
                     audioURL: url,
                     customTerms: vocabularyHints,
-                    language: language
+                    language: language,
+                    model: transcriptionModel
                 )
                 let cleanedRawText = TranscriptionQualityService.cleanedTranscript(rawText)
                 guard !TranscriptionQualityService.isLikelyArtifact(cleanedRawText, recordingDuration: recordingDuration) else {
@@ -101,7 +112,8 @@ final class DampfAblassenWorkflow: Workflow {
 
                 let answer = try await LLMService.dampfAblassen(
                     text: cleanedRawText,
-                    systemPrompt: settings.systemPrompt
+                    systemPrompt: settings.systemPrompt,
+                    model: formattingModel
                 )
                 let cleanedAnswer = TranscriptionQualityService.cleanedTranscript(answer)
                 guard cleanedAnswer != "KEINE_AUFNAHME_ERKANNT" else {

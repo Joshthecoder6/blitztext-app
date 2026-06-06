@@ -24,6 +24,11 @@ final class TranscriptionWorkflow: Workflow {
     private let language: String
     private let backend: TranscriptionBackend
     private let localModelName: String
+    private let transcriptionModel: String
+    private let formattingModel: String
+    private let smartFormat: Bool
+    private let formatSettings: TextImprovementSettings
+    private let contextApp: String
     private var transcriptionTask: Task<Void, Never>?
 
     init(
@@ -31,13 +36,24 @@ final class TranscriptionWorkflow: Workflow {
         customTerms: [String] = [],
         language: String = "de",
         backend: TranscriptionBackend = .remote,
-        localModelName: String = LocalTranscriptionService.recommendedFastModelName
+        localModelName: String = LocalTranscriptionService.recommendedFastModelName,
+        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
+        formattingModel: String = OpenRouterConfig.defaultFormattingModel,
+        smartFormat: Bool = false,
+        formatSettings: TextImprovementSettings = TextImprovementSettings(),
+        contextApp: String = ""
     ) {
         self.type = type
         self.customTerms = customTerms
         self.language = language
         self.backend = backend
         self.localModelName = localModelName
+        self.transcriptionModel = transcriptionModel
+        self.formattingModel = formattingModel
+        // Smart formatting only runs against the online backend (it needs the Llama model).
+        self.smartFormat = smartFormat && backend == .remote
+        self.formatSettings = formatSettings
+        self.contextApp = contextApp
     }
 
     func start() {
@@ -101,7 +117,8 @@ final class TranscriptionWorkflow: Workflow {
                     text = try await TranscriptionService.transcribe(
                         audioURL: url,
                         customTerms: vocabularyHints,
-                        language: requestLanguage
+                        language: requestLanguage,
+                        model: transcriptionModel
                     )
                 case .local:
                     text = try await LocalTranscriptionService.shared.transcribe(
@@ -125,8 +142,40 @@ final class TranscriptionWorkflow: Workflow {
                 transcriptionLogger.info(
                     "Transcription ready in \(elapsedMilliseconds(since: stopTime, until: responseReceivedAt)) ms (request \(elapsedMilliseconds(since: requestStart, until: responseReceivedAt)) ms)"
                 )
+
+                // Second pass: Llama smart formatting (lists, spoken corrections, fillers).
+                if smartFormat {
+                    phase = .running("Wird formatiert ...")
+                    do {
+                        let formatted = try await LLMService.smartFormat(
+                            text: cleaned,
+                            contextApp: contextApp,
+                            settings: formatSettings,
+                            model: formattingModel
+                        )
+                        try Task.checkCancellation()
+                        let cleanedFormatted = TranscriptionQualityService.cleanedTranscript(formatted)
+                        let output = cleanedFormatted.isEmpty ? cleaned : cleanedFormatted
+                        phase = .done(output)
+                        onOutput?(output)
+                        return
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        // If formatting fails, still hand back the raw transcript.
+                        transcriptionLogger.error(
+                            "Smart formatting failed, using raw transcript: \(error.localizedDescription, privacy: .private)"
+                        )
+                        phase = .done(cleaned)
+                        onOutput?(cleaned)
+                        return
+                    }
+                }
+
                 phase = .done(cleaned)
                 onOutput?(cleaned)
+            } catch is CancellationError {
+                return
             } catch {
                 transcriptionLogger.error(
                     "Transcription failed after \(elapsedMilliseconds(since: stopTime)) ms: \(error.localizedDescription, privacy: .private)"

@@ -9,23 +9,18 @@ enum LLMError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "OpenAI API Key fehlt. Bitte in den Einstellungen hinterlegen."
+            return "OpenRouter API Key fehlt. Bitte in den Einstellungen hinterlegen."
         case .networkError(let msg):
             return "Verbindungsproblem: \(msg)"
         case .apiError(let msg):
-            return "Fehler von OpenAI: \(msg)"
+            return "Fehler von OpenRouter: \(msg)"
         case .noContent:
             return "Keine Antwort erhalten. Bitte nochmal versuchen."
         }
     }
 }
 
-enum RewriteModel: String {
-    case fastEdit = "gpt-4o-mini"
-    case rageMode = "gpt-4o"
-}
-
-private struct OpenAIChatRequest: Encodable {
+private struct OpenRouterChatRequest: Encodable {
     struct Message: Encodable {
         let role: String
         let content: String
@@ -34,9 +29,12 @@ private struct OpenAIChatRequest: Encodable {
     let model: String
     let messages: [Message]
     let temperature: Double
+    let top_p: Double?
+    let max_tokens: Int?
+    let provider: OpenRouterConfig.ProviderPreference?
 }
 
-private struct OpenAIChatResponse: Decodable {
+private struct OpenRouterChatResponse: Decodable {
     struct Choice: Decodable {
         struct Message: Decodable {
             let content: String?
@@ -48,7 +46,7 @@ private struct OpenAIChatResponse: Decodable {
     let choices: [Choice]?
 }
 
-private struct OpenAIErrorResponse: Decodable {
+private struct OpenRouterErrorResponse: Decodable {
     struct APIError: Decodable {
         let message: String?
     }
@@ -57,8 +55,6 @@ private struct OpenAIErrorResponse: Decodable {
 }
 
 enum LLMService {
-    private static let chatCompletionsURL = URL(string: "https://api.openai.com/v1/chat/completions")!
-
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.waitsForConnectivity = false
@@ -68,67 +64,101 @@ enum LLMService {
         return URLSession(configuration: configuration)
     }()
 
+    // MARK: - Smart Dictation (HushType prompt)
+
+    /// Cleans up a raw dictation transcript with the exact HushType dictation
+    /// prompt: applies spoken corrections, detects ordered/unordered lists,
+    /// removes filler words, and adapts tone to the context app.
+    static func smartFormat(
+        text: String,
+        contextApp: String,
+        settings: TextImprovementSettings,
+        model: String = OpenRouterConfig.defaultFormattingModel
+    ) async throws -> String {
+        try await complete(
+            text: text,
+            systemPrompt: dictatePrompt(contextApp: contextApp, settings: settings),
+            model: model,
+            temperature: 0,
+            topP: OpenRouterConfig.llamaTopP,
+            maxTokens: OpenRouterConfig.llamaMaxTokens
+        )
+    }
+
+    // MARK: - Classic Rewrites
+
     static func improve(
         text: String,
         settings: TextImprovementSettings,
-        model: RewriteModel = .fastEdit
+        model: String = OpenRouterConfig.defaultFormattingModel
     ) async throws -> String {
         try await complete(
             text: text,
             systemPrompt: buildSystemPrompt(settings: settings),
             model: model,
-            temperature: 0.3
+            temperature: 0.3,
+            topP: nil,
+            maxTokens: OpenRouterConfig.llamaMaxTokens
         )
     }
 
     static func dampfAblassen(
         text: String,
         systemPrompt: String,
-        model: RewriteModel = .rageMode
+        model: String = OpenRouterConfig.defaultFormattingModel
     ) async throws -> String {
         try await complete(
             text: text,
             systemPrompt: systemPrompt,
             model: model,
-            temperature: 0.4
+            temperature: 0.4,
+            topP: nil,
+            maxTokens: OpenRouterConfig.llamaMaxTokens
         )
     }
 
     static func addEmojis(
         text: String,
         settings: EmojiTextSettings,
-        model: RewriteModel = .fastEdit
+        model: String = OpenRouterConfig.defaultFormattingModel
     ) async throws -> String {
         try await complete(
             text: text,
             systemPrompt: buildEmojiSystemPrompt(density: settings.emojiDensity),
             model: model,
-            temperature: 0.3
+            temperature: 0.3,
+            topP: nil,
+            maxTokens: OpenRouterConfig.llamaMaxTokens
         )
     }
 
     private static func complete(
         text: String,
         systemPrompt: String,
-        model: RewriteModel,
-        temperature: Double
+        model: String,
+        temperature: Double,
+        topP: Double?,
+        maxTokens: Int?
     ) async throws -> String {
-        guard let apiKey = KeychainService.load(key: .openAIAPIKey) else {
+        guard let apiKey = KeychainService.load(key: .openRouterAPIKey) else {
             throw LLMError.notConfigured
         }
 
-        let payload = OpenAIChatRequest(
-            model: model.rawValue,
+        let payload = OpenRouterChatRequest(
+            model: model,
             messages: [
                 .init(role: "system", content: systemPrompt),
                 .init(role: "user", content: text),
             ],
-            temperature: temperature
+            temperature: temperature,
+            top_p: topP,
+            max_tokens: maxTokens,
+            provider: OpenRouterConfig.llamaProvider
         )
 
-        var request = URLRequest(url: chatCompletionsURL)
+        var request = URLRequest(url: OpenRouterConfig.chatCompletionsURL)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        OpenRouterConfig.authorize(&request, apiKey: apiKey)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 45
         request.httpBody = try JSONEncoder().encode(payload)
@@ -140,10 +170,10 @@ enum LLMService {
         }
 
         guard httpResponse.statusCode == 200 else {
-            throw LLMError.apiError(openAIErrorMessage(from: data) ?? "Status \(httpResponse.statusCode)")
+            throw LLMError.apiError(errorMessage(from: data) ?? "Status \(httpResponse.statusCode)")
         }
 
-        let result = try JSONDecoder().decode(OpenAIChatResponse.self, from: data)
+        let result = try JSONDecoder().decode(OpenRouterChatResponse.self, from: data)
         guard let content = result.choices?.first?.message?.content,
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LLMError.noContent
@@ -152,8 +182,59 @@ enum LLMService {
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func openAIErrorMessage(from data: Data) -> String? {
-        (try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data))?.error?.message
+    private static func errorMessage(from data: Data) -> String? {
+        (try? JSONDecoder().decode(OpenRouterErrorResponse.self, from: data))?.error?.message
+    }
+
+    // MARK: - Prompts
+
+    /// The HushType dictation system prompt. Static core + a dynamic line for the
+    /// context app, plus optional reinforcement for the user's custom terms /
+    /// instruction so the in-app customization keeps working.
+    private static func dictatePrompt(contextApp: String, settings: TextImprovementSettings) -> String {
+        var prompt = """
+        Du bist HushType, ein unsichtbares Diktier-Tool. Deine EINZIGE Aufgabe ist es, gesprochenen Text in geschriebenen Text zu wandeln. Du bist KEIN Assistent und KEIN Berater.
+
+        ===== HARTE REGELN - befolge wortwoertlich =====
+        1. Gib NUR den vom Nutzer gesprochenen Text aus - bereinigt, aber inhaltlich identisch.
+        2. Fuege NIEMALS eigene Kommentare, Erklaerungen, Meta-Aussagen oder Hinweise hinzu.
+           Verboten sind insbesondere Formulierungen wie:
+             - "dieser Punkt ist identisch mit ..."
+             - "es waere besser zu sagen ..."
+             - "stattdessen koennte man ..."
+             - "es wurden keine weiteren Punkte erwaehnt"
+             - "der Sprecher meint vermutlich ..."
+           Wenn der Nutzer denselben Satz mehrfach sagt: gib ihn auch mehrfach aus, exakt so.
+        3. Keine Einleitung, kein Vor- oder Nachwort. Beginne direkt mit dem ersten Wort.
+        4. Aendere KEINE Inhalte. Ergaenze nichts, lasse nichts weg. Reduziere nicht zusammen.
+        5. Erlaubt sind nur: Fuellwoerter (aeh, aehm, also) entfernen, Grammatik/Satzzeichen korrigieren, Selbstkorrekturen im Satz aufloesen (z.B. "ich gehe ins Kino, ach nein, ins Theater" -> "ich gehe ins Theater"), Casing/Grossschreibung.
+
+        ===== AUFZAEHLUNGEN (sprach-agnostisch) =====
+        Wenn der Diktattext eine geordnete Aufzaehlung enthaelt ("erstens/zweitens/drittens", "first/second/third", "primero/segundo", "punkt eins, punkt zwei", "one, two, three" usw.), formatiere die Antwort als nummerierte Markdown-Liste - jeder Punkt auf eigener Zeile im Format "1. ...", "2. ...". Auch wenn zwei Punkte denselben Inhalt haben, beide werden ausgegeben.
+        Ungeordnete Aufzaehlungen ("ausserdem", "weiterhin", "also", "plus") -> Bullets mit "- ".
+        Normaler Fliesstext -> keine Liste erzwingen.
+
+        ===== TONFALL =====
+        Passe den Stil an die Kontext-App an: Slack/iMessage = casual, Mail/Mail-Apps = professionell, Code-Editoren (Cursor, VS Code, Xcode) = reiner Code ohne Prosa.
+        """
+
+        let trimmedContext = contextApp.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedContext.isEmpty {
+            prompt += "\n\nDie Kontext-App ist nicht bekannt - verwende einen neutralen, professionellen Ton."
+        } else {
+            prompt += "\n\nDie Kontext-App ist: \(trimmedContext)."
+        }
+
+        if !settings.customTerms.isEmpty {
+            prompt += "\n\nDiese Eigennamen und Fachbegriffe muessen exakt so geschrieben werden: \(settings.customTerms.joined(separator: ", "))."
+        }
+
+        let extraInstruction = settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !extraInstruction.isEmpty {
+            prompt += "\n\nZusaetzliche Anweisung des Nutzers: \(extraInstruction)"
+        }
+
+        return prompt
     }
 
     private static func buildEmojiSystemPrompt(density: EmojiTextSettings.EmojiDensity) -> String {

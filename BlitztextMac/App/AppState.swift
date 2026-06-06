@@ -108,7 +108,9 @@ final class AppState {
                     ? "Lokal: \(LocalTranscriptionModel.displayName(for: modelName))."
                     : "Lokales WhisperKit-Modell fehlt."
             }
-            return "Online: Whisper über OpenAI."
+            return appSettings.smartFormattingEnabled
+                ? "Online: Whisper + Llama (OpenRouter)."
+                : "Online: Whisper über OpenRouter."
         case .localTranscription:
             return "Nur lokal. Kein Server."
         case .textImprover, .dampfAblassen, .emojiText:
@@ -160,6 +162,7 @@ final class AppState {
         workflowCleanupTask?.cancel()
         activeLaunchSource = source
         activePasteTarget = capturePasteTarget(for: source)
+        let contextApp = activePasteTarget?.application.localizedName ?? ""
 
         switch type {
         case .transcription:
@@ -167,7 +170,12 @@ final class AppState {
                 customTerms: textImprovementSettings.customTerms,
                 language: transcriptionSettings.language,
                 backend: appSettings.secureLocalModeEnabled ? .local : .remote,
-                localModelName: selectedLocalModelName
+                localModelName: selectedLocalModelName,
+                transcriptionModel: appSettings.transcriptionModel,
+                formattingModel: appSettings.formattingModel,
+                smartFormat: appSettings.smartFormattingEnabled,
+                formatSettings: textImprovementSettings,
+                contextApp: contextApp
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -179,7 +187,9 @@ final class AppState {
                 customTerms: textImprovementSettings.customTerms,
                 language: transcriptionSettings.language,
                 backend: .local,
-                localModelName: selectedLocalModelName
+                localModelName: selectedLocalModelName,
+                transcriptionModel: appSettings.transcriptionModel,
+                formattingModel: appSettings.formattingModel
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -188,7 +198,9 @@ final class AppState {
         case .textImprover:
             let workflow = TextImprovementWorkflow(
                 settings: textImprovementSettings,
-                language: transcriptionSettings.language
+                language: transcriptionSettings.language,
+                transcriptionModel: appSettings.transcriptionModel,
+                formattingModel: appSettings.formattingModel
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -198,7 +210,9 @@ final class AppState {
             let workflow = DampfAblassenWorkflow(
                 settings: dampfAblassenSettings,
                 customTerms: textImprovementSettings.customTerms,
-                language: transcriptionSettings.language
+                language: transcriptionSettings.language,
+                transcriptionModel: appSettings.transcriptionModel,
+                formattingModel: appSettings.formattingModel
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -208,7 +222,9 @@ final class AppState {
             let workflow = EmojiTextWorkflow(
                 settings: emojiTextSettings,
                 customTerms: textImprovementSettings.customTerms,
-                language: transcriptionSettings.language
+                language: transcriptionSettings.language,
+                transcriptionModel: appSettings.transcriptionModel,
+                formattingModel: appSettings.formattingModel
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow

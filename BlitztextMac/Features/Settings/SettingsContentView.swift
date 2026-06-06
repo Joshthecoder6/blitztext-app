@@ -56,17 +56,17 @@ private struct SectionLabel: View {
 // MARK: - Access Settings (Tab 1: Zugang)
 
 struct AccessSettingsView: View {
-    private static let openAIAPIKeyPattern = #"^sk-[A-Za-z0-9_-]{20,}$"#
+    private static let openRouterAPIKeyPattern = #"^sk-(or-)?[A-Za-z0-9_-]{20,}$"#
 
     @Bindable var appState: AppState
 
     private enum FieldFocus {
-        case openAIAPIKey
+        case openRouterAPIKey
     }
 
     @State private var launchAtLoginService = LaunchAtLoginService()
     @State private var currentInstallLocation = BlitztextInstallLocationService.currentInstallLocation
-    @State private var openAIAPIKey = ""
+    @State private var openRouterAPIKey = ""
     @State private var editingAPIKey = false
     @State private var saved = false
     @State private var saveErrorText: String?
@@ -115,9 +115,9 @@ struct AccessSettingsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    SectionLabel(text: "OpenAI API Key")
+                    SectionLabel(text: "OpenRouter API Key")
                     Spacer()
-                    if appState.hasValue(for: .openAIAPIKey) && !editingAPIKey {
+                    if appState.hasValue(for: .openRouterAPIKey) && !editingAPIKey {
                         Button("Aendern") { editingAPIKey = true }
                             .font(.system(size: 10, weight: .medium))
                             .buttonStyle(.plain)
@@ -125,12 +125,12 @@ struct AccessSettingsView: View {
                     }
                 }
 
-                if appState.hasValue(for: .openAIAPIKey) && !editingAPIKey {
+                if appState.hasValue(for: .openRouterAPIKey) && !editingAPIKey {
                     HStack(spacing: 6) {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 9))
                             .foregroundStyle(.green.opacity(0.8))
-                        Text(appState.apiKeyDisplayValue(for: .openAIAPIKey))
+                        Text(appState.apiKeyDisplayValue(for: .openRouterAPIKey))
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
@@ -142,10 +142,10 @@ struct AccessSettingsView: View {
                     )
                 } else {
                     HStack(spacing: 8) {
-                        SecureField("sk-...", text: $openAIAPIKey)
+                        SecureField("sk-or-...", text: $openRouterAPIKey)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 11.5))
-                            .focused($focusedField, equals: .openAIAPIKey)
+                            .focused($focusedField, equals: .openRouterAPIKey)
 
                         Button("Einfuegen") {
                             pasteAPIKeyFromClipboard()
@@ -154,7 +154,7 @@ struct AccessSettingsView: View {
                     }
                 }
 
-                Text("Dein Key bleibt lokal in dieser App. Audio und Text werden direkt an die OpenAI API gesendet.")
+                Text("Dein Key bleibt lokal in dieser App. Audio und Text werden direkt an die OpenRouter API gesendet (Transkription via Whisper, Formatierung via Llama). Key erstellen unter openrouter.ai/keys.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -359,15 +359,15 @@ struct AccessSettingsView: View {
             launchAtLoginService.refresh()
             refreshInstallState()
             load()
-            if !appState.hasValue(for: .openAIAPIKey) {
+            if !appState.hasValue(for: .openRouterAPIKey) {
                 editingAPIKey = true
-                focusedField = .openAIAPIKey
+                focusedField = .openRouterAPIKey
             }
         }
     }
 
     private func load() {
-        openAIAPIKey = ""
+        openRouterAPIKey = ""
     }
 
     private func save() {
@@ -375,26 +375,26 @@ struct AccessSettingsView: View {
         cleanupStatusText = nil
         cleanupErrorText = nil
         KeychainService.invalidateCache()
-        let trimmedAPIKey = openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAPIKey = openRouterAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if editingAPIKey || !appState.hasValue(for: .openAIAPIKey) {
+        if editingAPIKey || !appState.hasValue(for: .openRouterAPIKey) {
             guard !trimmedAPIKey.isEmpty else {
-                saveErrorText = "Bitte trage deinen OpenAI API Key ein."
+                saveErrorText = "Bitte trage deinen OpenRouter API Key ein."
                 return
             }
             do {
-                try KeychainService.save(key: .openAIAPIKey, value: trimmedAPIKey)
-                openAIAPIKey = ""
+                try KeychainService.save(key: .openRouterAPIKey, value: trimmedAPIKey)
+                openRouterAPIKey = ""
                 editingAPIKey = false
             } catch {
-                saveErrorText = "OpenAI API Key konnte nicht gespeichert werden."
+                saveErrorText = "OpenRouter API Key konnte nicht gespeichert werden."
                 return
             }
         }
 
         KeychainService.invalidateCache()
-        if !appState.hasValue(for: .openAIAPIKey) {
-            saveErrorText = "OpenAI API Key wurde nicht persistent gespeichert. Bitte App neu starten und erneut versuchen."
+        if !appState.hasValue(for: .openRouterAPIKey) {
+            saveErrorText = "OpenRouter API Key wurde nicht persistent gespeichert. Bitte App neu starten und erneut versuchen."
             return
         }
 
@@ -412,12 +412,12 @@ struct AccessSettingsView: View {
 
         let firstLine = rawText.components(separatedBy: .newlines).first ?? rawText
         let trimmedKey = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedKey.range(of: Self.openAIAPIKeyPattern, options: .regularExpression) != nil else {
-            saveErrorText = "Zwischenablage enthält keinen plausiblen OpenAI API Key."
+        guard trimmedKey.range(of: Self.openRouterAPIKeyPattern, options: .regularExpression) != nil else {
+            saveErrorText = "Zwischenablage enthält keinen plausiblen OpenRouter API Key."
             return
         }
 
-        openAIAPIKey = trimmedKey
+        openRouterAPIKey = trimmedKey
         NSPasteboard.general.clearContents()
         saveErrorText = nil
     }
@@ -479,7 +479,7 @@ struct AccessSettingsView: View {
         refreshInstallState()
 
         if deleteLocalDataOnCleanup {
-            openAIAPIKey = ""
+            openRouterAPIKey = ""
             editingAPIKey = true
         }
 
@@ -598,7 +598,7 @@ struct CustomizeSettingsView: View {
                 SectionLabel(text: "Tastenk\u{00FC}rzel")
 
                 VStack(spacing: 6) {
-                    ForEach(WorkflowType.mainMenuCases) { type in
+                    ForEach(WorkflowType.allCases) { type in
                         HStack {
                             Text(type.hotkeyLabel)
                                 .font(.system(size: 11, design: .monospaced))
@@ -611,19 +611,46 @@ struct CustomizeSettingsView: View {
                     }
                 }
 
-                // Mode picker
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Modus")
+                Text("Jedes Kürzel ist ein Umschalter: einmal drücken zum Starten, nochmal drücken (oder Escape) zum Beenden. Der Text wird direkt eingefügt.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // MARK: Modelle
+            VStack(alignment: .leading, spacing: 10) {
+                SectionLabel(text: "Modelle (OpenRouter)")
+
+                Toggle("Smarte Formatierung (Llama)", isOn: $appState.appSettings.smartFormattingEnabled)
+                    .toggleStyle(.switch)
+
+                Text("Erkennt Aufzählungen, wendet gesprochene Korrekturen an und entfernt Füllwörter – HushType-Diktat-Logik. Aus = nur reine Transkription.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Whisper-Modell (selbst wählbar)")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
-
-                    Picker("", selection: $appState.appSettings.hotkeyMode) {
-                        ForEach(HotkeyMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    TextField(OpenRouterConfig.defaultTranscriptionModel, text: $appState.appSettings.transcriptionModel)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
                 }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Llama-Modell")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    TextField(OpenRouterConfig.defaultFormattingModel, text: $appState.appSettings.formattingModel)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                }
+
+                Text("OpenRouter-Modell-IDs, Standard: openai/whisper-large-v3-turbo und meta-llama/llama-3.3-70b-instruct.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             // MARK: Blitztext+

@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 @main
 struct BlitztextMacApp: App {
@@ -35,9 +36,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         NSApp.setActivationPolicy(.accessory)
 
-        // Hotkey events
+        // Trigger the microphone permission prompt early so dictation isn't silent.
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        }
+
+        // Hotkey events (the tap callback runs on the main run loop; hop to the main actor).
         appState.hotkeyService.onHotkeyEvent = { [weak self] event in
-            self?.handleHotkeyEvent(event)
+            Task { @MainActor in
+                self?.handleHotkeyEvent(event)
+            }
         }
         appState.onMenuBarStatusChange = { [weak self] status in
             self?.menuBarStatusController.update(to: status)
@@ -57,6 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Re-attempt creating the event tap; it only succeeds once Accessibility is granted.
+        appState.hotkeyService.start()
+        appState.refreshAccessibilityPermission()
+    }
+
     @objc private func handleDismissPopover() {
         appState.isPopoverShown = false
         popover.performClose(nil)
@@ -64,56 +78,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func handleHotkeyEvent(_ event: HotkeyEvent) {
         switch event {
-        case .down(let type):
-            handleHotkeyDown(type)
-        case .up(let type):
-            handleHotkeyUp(type)
+        case .toggle(let type):
+            handleHotkeyToggle(type)
         case .cancel:
             handleHotkeyCancel()
         }
     }
 
-    private func handleHotkeyDown(_ type: WorkflowType) {
+    /// Press a hotkey once to start the workflow, press again to stop.
+    /// Runs in the background and pastes into the app you were using.
+    private func handleHotkeyToggle(_ type: WorkflowType) {
         guard appState.isConfigured else { return }
 
-        let mode = appState.appSettings.hotkeyMode
-
-        switch mode {
-        case .hold:
-            // Hold mode: start recording on key down
-            appState.startWorkflow(type, source: .hotkeyBackground)
-
-        case .toggle:
-            // Toggle mode: if already recording same workflow, stop it
-            if let active = appState.activeWorkflow,
-               active.type == type,
-               active.phase.isActive {
-                active.stop()
-            } else {
-                appState.prepareForPopoverPresentation()
-                appState.startWorkflow(type, source: .manual)
-                showPopover()
-            }
-        }
-    }
-
-    private func handleHotkeyUp(_ type: WorkflowType) {
-        let mode = appState.appSettings.hotkeyMode
-
-        guard mode == .hold else { return }
-
-        // Hold mode: stop recording on key release
+        // Already running this workflow? Second press stops recording and processes.
         if let active = appState.activeWorkflow,
-           active.type == type {
-            // Only stop if currently recording (running phase)
-            if case .running = active.phase {
+           active.type == type,
+           active.phase.isActive {
+            if case .running = active.phase, active.isRecording {
                 active.stop()
             }
+            return
         }
+
+        appState.startWorkflow(type, source: .hotkeyBackground)
     }
 
     private func handleHotkeyCancel() {
-        appState.activeWorkflow?.stop()
+        guard let active = appState.activeWorkflow, active.isRecording else { return }
+        active.reset()
     }
 
     @objc private func togglePopover() {

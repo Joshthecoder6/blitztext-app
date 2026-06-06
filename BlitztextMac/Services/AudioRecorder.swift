@@ -20,6 +20,33 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
 
     func startRecording() {
         errorMessage = nil
+
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .denied, .restricted:
+            errorMessage = "Mikrofon-Zugriff fehlt. Systemeinstellungen → Datenschutz & Sicherheit → Mikrofon → Blitztext aktivieren, dann Blitztext neu starten."
+            return
+        case .notDetermined:
+            // Trigger the system prompt and start once the user decides.
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if granted {
+                        self.beginRecording()
+                    } else {
+                        self.errorMessage = "Mikrofon-Zugriff wurde verweigert. In den Systemeinstellungen aktivieren und erneut versuchen."
+                    }
+                }
+            }
+            return
+        case .authorized:
+            beginRecording()
+        @unknown default:
+            beginRecording()
+        }
+    }
+
+    private func beginRecording() {
+        errorMessage = nil
         lastRecordingDuration = 0
         recordingURL = nil
         if let currentFileURL {
