@@ -512,7 +512,6 @@ struct AccessSettingsView: View {
 
 struct CustomizeSettingsView: View {
     @Bindable var appState: AppState
-    @State private var newTerm = ""
 
     private var installedLocalModels: [LocalTranscriptionModel] {
         LocalTranscriptionService.installedModels()
@@ -755,69 +754,67 @@ struct CustomizeSettingsView: View {
                 }
             }
 
-            // MARK: Eigennamen
+            // MARK: Wörterbuch
             VStack(alignment: .leading, spacing: 10) {
-                SectionLabel(text: "Eigennamen")
+                SectionLabel(text: "W\u{00F6}rterbuch")
 
-                // Term chips
-                if !appState.textImprovementSettings.customTerms.isEmpty {
-                    FlowLayout(spacing: 5) {
-                        ForEach(appState.textImprovementSettings.customTerms, id: \.self) { term in
-                            HStack(spacing: 3) {
-                                Text(term)
-                                    .font(.system(size: 10.5))
-                                Button {
-                                    withAnimation(.easeOut(duration: 0.15)) {
-                                        appState.textImprovementSettings.customTerms.removeAll { $0 == term }
-                                    }
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 7, weight: .bold))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .buttonStyle(SubtleButtonStyle())
+                Text("Eigennamen, Fachbegriffe und Ersetzungen. \u{201E}Geschrieben\u{201C} leer lassen = nur die korrekte Schreibweise erzwingen. Ausgef\u{00FC}llt = ersetzen (gesprochen \u{2192} geschrieben).")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if appState.dictionarySettings.entries.isEmpty {
+                    Text("Noch keine Eintr\u{00E4}ge.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                }
+
+                ForEach($appState.dictionarySettings.entries) { $entry in
+                    HStack(spacing: 6) {
+                        TextField("Gesprochen", text: $entry.spoken)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11))
+
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+
+                        TextField("Geschrieben (optional)", text: $entry.written)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11))
+
+                        Button {
+                            let id = entry.id
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                appState.dictionarySettings.entries.removeAll { $0.id == id }
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(Color(nsColor: .controlBackgroundColor))
-                            )
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(Color.primary.opacity(0.04), lineWidth: 0.5)
-                            )
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.tertiary)
                         }
+                        .buttonStyle(SubtleButtonStyle())
                     }
                 }
 
-                HStack(spacing: 6) {
-                    TextField("Neuer Begriff", text: $newTerm)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11))
-                        .onSubmit { addTerm() }
-
-                    Button { addTerm() } label: {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        appState.dictionarySettings.entries.append(DictionaryEntry())
+                    }
+                } label: {
+                    HStack(spacing: 4) {
                         Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 16))
+                            .font(.system(size: 14))
                             .foregroundStyle(.blue.opacity(0.7))
+                        Text("Eintrag hinzuf\u{00FC}gen")
+                            .font(.system(size: 11, weight: .medium))
                     }
-                    .buttonStyle(SubtleButtonStyle())
-                    .disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                .buttonStyle(SubtleButtonStyle())
             }
 
         }
         .padding(16)
-    }
-
-    private func addTerm() {
-        let trimmed = newTerm.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, !appState.textImprovementSettings.customTerms.contains(trimmed) else { return }
-        withAnimation(.easeOut(duration: 0.15)) {
-            appState.textImprovementSettings.customTerms.append(trimmed)
-        }
-        newTerm = ""
     }
 }
 

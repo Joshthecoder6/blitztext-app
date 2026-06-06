@@ -175,14 +175,15 @@ if [ "$INSTALL_APP" = true ]; then
     sign_app "$INSTALL_DEST"
     verify_universal_app "$INSTALL_DEST"
     RUN_TARGET="$INSTALL_DEST"
+    # Avoid a duplicate app bundle (and duplicate menu-bar icons / login items):
+    # when installing, keep only the copy in /Applications.
+    rm -rf "$DEST"
+    echo "🧹 Lokale Build-Kopie entfernt – nur $INSTALL_DEST bleibt."
 fi
 
 echo ""
 echo "✅ Fertig! App liegt unter:"
-echo "   $DEST"
-if [ "$INSTALL_APP" = true ]; then
-    echo "   $RUN_TARGET"
-fi
+echo "   $RUN_TARGET"
 echo ""
 echo "Build-Typ: $BUILD_CONFIGURATION"
 echo "Architekturen: $UNIVERSAL_ARCHS"

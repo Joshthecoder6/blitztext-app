@@ -17,18 +17,24 @@ final class TextImprovementWorkflow: Workflow {
     private let language: String
     private let transcriptionModel: String
     private let formattingModel: String
+    private let vocabulary: [String]
+    private let dictionary: [DictionaryEntry]
     private var processingTask: Task<Void, Never>?
 
     init(
         settings: TextImprovementSettings,
         language: String = "de",
         transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
-        formattingModel: String = OpenRouterConfig.defaultFormattingModel
+        formattingModel: String = OpenRouterConfig.defaultFormattingModel,
+        vocabulary: [String] = [],
+        dictionary: [DictionaryEntry] = []
     ) {
         self.settings = settings
         self.language = language
         self.transcriptionModel = transcriptionModel
         self.formattingModel = formattingModel
+        self.vocabulary = vocabulary
+        self.dictionary = dictionary
     }
 
     // MARK: - Recording State
@@ -81,7 +87,7 @@ final class TextImprovementWorkflow: Workflow {
 
         phase = .running("Wird transkribiert ...")
         let recordingDuration = recorder.lastRecordingDuration
-        let vocabularyHints = recordingDuration >= 0.9 ? settings.customTerms : []
+        let vocabularyHints = recordingDuration >= 0.9 ? vocabulary : []
 
         processingTask = Task {
             defer {
@@ -110,6 +116,7 @@ final class TextImprovementWorkflow: Workflow {
                 let improved = try await LLMService.improve(
                     text: cleanedRawText,
                     settings: settings,
+                    dictionary: dictionary,
                     model: formattingModel
                 )
 

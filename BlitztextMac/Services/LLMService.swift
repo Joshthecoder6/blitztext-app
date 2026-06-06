@@ -73,11 +73,12 @@ enum LLMService {
         text: String,
         contextApp: String,
         settings: TextImprovementSettings,
+        dictionary: [DictionaryEntry] = [],
         model: String = OpenRouterConfig.defaultFormattingModel
     ) async throws -> String {
         try await complete(
             text: text,
-            systemPrompt: dictatePrompt(contextApp: contextApp, settings: settings),
+            systemPrompt: dictatePrompt(contextApp: contextApp, settings: settings, dictionary: dictionary),
             model: model,
             temperature: 0,
             topP: OpenRouterConfig.llamaTopP,
@@ -90,11 +91,12 @@ enum LLMService {
     static func improve(
         text: String,
         settings: TextImprovementSettings,
+        dictionary: [DictionaryEntry] = [],
         model: String = OpenRouterConfig.defaultFormattingModel
     ) async throws -> String {
         try await complete(
             text: text,
-            systemPrompt: buildSystemPrompt(settings: settings),
+            systemPrompt: buildSystemPrompt(settings: settings) + dictionaryInstructions(dictionary),
             model: model,
             temperature: 0.3,
             topP: nil,
@@ -191,7 +193,22 @@ enum LLMService {
     /// The HushType dictation system prompt. Static core + a dynamic line for the
     /// context app, plus optional reinforcement for the user's custom terms /
     /// instruction so the in-app customization keeps working.
-    private static func dictatePrompt(contextApp: String, settings: TextImprovementSettings) -> String {
+    /// A "WÖRTERBUCH" prompt block from the dictionary: exact spellings + replacements.
+    private static func dictionaryInstructions(_ entries: [DictionaryEntry]) -> String {
+        let dict = DictionarySettings(entries: entries)
+        var lines: [String] = []
+        if !dict.spellingTerms.isEmpty {
+            lines.append("Schreibe diese Eigennamen/Begriffe immer exakt so: \(dict.spellingTerms.joined(separator: ", ")).")
+        }
+        if !dict.replacements.isEmpty {
+            let repl = dict.replacements.map { "\"\($0.from)\" → \"\($0.to)\"" }.joined(separator: "; ")
+            lines.append("Ersetzungen (wenn sinngemäß das Linke gesprochen wird, schreibe das Rechte): \(repl).")
+        }
+        guard !lines.isEmpty else { return "" }
+        return "\n\n===== WÖRTERBUCH =====\n" + lines.joined(separator: "\n")
+    }
+
+    private static func dictatePrompt(contextApp: String, settings: TextImprovementSettings, dictionary: [DictionaryEntry]) -> String {
         var prompt = """
         Du bist HushType, ein unsichtbares Diktier-Tool. Deine EINZIGE Aufgabe ist es, gesprochenen Text in geschriebenen Text zu wandeln. Du bist KEIN Assistent und KEIN Berater.
 
@@ -225,14 +242,12 @@ enum LLMService {
             prompt += "\n\nDie Kontext-App ist: \(trimmedContext)."
         }
 
-        if !settings.customTerms.isEmpty {
-            prompt += "\n\nDiese Eigennamen und Fachbegriffe muessen exakt so geschrieben werden: \(settings.customTerms.joined(separator: ", "))."
-        }
-
         let extraInstruction = settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         if !extraInstruction.isEmpty {
             prompt += "\n\nZusaetzliche Anweisung des Nutzers: \(extraInstruction)"
         }
+
+        prompt += dictionaryInstructions(dictionary)
 
         return prompt
     }

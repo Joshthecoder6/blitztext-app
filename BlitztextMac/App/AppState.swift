@@ -54,6 +54,9 @@ final class AppState {
     var emojiTextSettings: EmojiTextSettings {
         didSet { saveSettings() }
     }
+    var dictionarySettings: DictionarySettings {
+        didSet { saveSettings() }
+    }
 
     // Hotkeys
     let hotkeyService = HotkeyService()
@@ -66,6 +69,18 @@ final class AppState {
         !isConfigured && !appSettings.hasSeenOnboarding
     }
 
+    /// Words hinted to the transcription model (dictionary + any legacy custom terms).
+    var dictionaryVocabulary: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for term in dictionarySettings.vocabulary + textImprovementSettings.customTerms {
+            let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed.lowercased()).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
+    }
+
     var currentPhase: WorkflowPhase {
         activeWorkflow?.phase ?? .idle
     }
@@ -76,6 +91,15 @@ final class AppState {
         self.textImprovementSettings = Self.loadTextImprovementSettings()
         self.dampfAblassenSettings = Self.loadDampfAblassenSettings()
         self.emojiTextSettings = Self.loadEmojiTextSettings()
+        self.dictionarySettings = Self.loadDictionarySettings()
+
+        // One-time migration: fold legacy "Eigennamen" (customTerms) into the dictionary.
+        if dictionarySettings.entries.isEmpty, !textImprovementSettings.customTerms.isEmpty {
+            dictionarySettings.entries = textImprovementSettings.customTerms.map { DictionaryEntry(spoken: $0) }
+            textImprovementSettings.customTerms = []
+            saveSettings()
+        }
+
         refreshAccessibilityPermission()
         autoSelectFastLocalModelIfNeeded()
         prewarmLocalTranscriptionIfNeeded()
@@ -164,10 +188,13 @@ final class AppState {
         activePasteTarget = capturePasteTarget(for: source)
         let contextApp = activePasteTarget?.application.localizedName ?? ""
 
+        let vocabulary = dictionaryVocabulary
+        let dictionary = dictionarySettings.entries
+
         switch type {
         case .transcription:
             let workflow = TranscriptionWorkflow(
-                customTerms: textImprovementSettings.customTerms,
+                customTerms: vocabulary,
                 language: transcriptionSettings.language,
                 backend: appSettings.secureLocalModeEnabled ? .local : .remote,
                 localModelName: selectedLocalModelName,
@@ -175,7 +202,8 @@ final class AppState {
                 formattingModel: appSettings.formattingModel,
                 smartFormat: appSettings.smartFormattingEnabled,
                 formatSettings: textImprovementSettings,
-                contextApp: contextApp
+                contextApp: contextApp,
+                dictionary: dictionary
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -184,7 +212,7 @@ final class AppState {
         case .localTranscription:
             let workflow = TranscriptionWorkflow(
                 type: .localTranscription,
-                customTerms: textImprovementSettings.customTerms,
+                customTerms: vocabulary,
                 language: transcriptionSettings.language,
                 backend: .local,
                 localModelName: selectedLocalModelName,
@@ -200,7 +228,9 @@ final class AppState {
                 settings: textImprovementSettings,
                 language: transcriptionSettings.language,
                 transcriptionModel: appSettings.transcriptionModel,
-                formattingModel: appSettings.formattingModel
+                formattingModel: appSettings.formattingModel,
+                vocabulary: vocabulary,
+                dictionary: dictionary
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -209,7 +239,7 @@ final class AppState {
         case .dampfAblassen:
             let workflow = DampfAblassenWorkflow(
                 settings: dampfAblassenSettings,
-                customTerms: textImprovementSettings.customTerms,
+                customTerms: vocabulary,
                 language: transcriptionSettings.language,
                 transcriptionModel: appSettings.transcriptionModel,
                 formattingModel: appSettings.formattingModel
@@ -221,7 +251,7 @@ final class AppState {
         case .emojiText:
             let workflow = EmojiTextWorkflow(
                 settings: emojiTextSettings,
-                customTerms: textImprovementSettings.customTerms,
+                customTerms: vocabulary,
                 language: transcriptionSettings.language,
                 transcriptionModel: appSettings.transcriptionModel,
                 formattingModel: appSettings.formattingModel
@@ -391,7 +421,8 @@ final class AppState {
             transcription: transcriptionSettings,
             textImprovement: textImprovementSettings,
             dampfAblassen: dampfAblassenSettings,
-            emojiText: emojiTextSettings
+            emojiText: emojiTextSettings,
+            dictionary: dictionarySettings
         )
         if let data = try? JSONEncoder().encode(container) {
             try? data.write(to: Self.settingsURL)
@@ -416,6 +447,10 @@ final class AppState {
 
     private static func loadEmojiTextSettings() -> EmojiTextSettings {
         loadContainer()?.emojiText ?? EmojiTextSettings()
+    }
+
+    private static func loadDictionarySettings() -> DictionarySettings {
+        loadContainer()?.dictionary ?? DictionarySettings()
     }
 
     private static func loadContainer() -> SettingsContainer? {
@@ -619,6 +654,7 @@ private struct SettingsContainer: Codable {
     var textImprovement: TextImprovementSettings
     var dampfAblassen: DampfAblassenSettings?
     var emojiText: EmojiTextSettings?
+    var dictionary: DictionarySettings?
 }
 
 // MARK: - Notification for Popover Dismissal

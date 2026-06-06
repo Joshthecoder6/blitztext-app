@@ -248,3 +248,59 @@ struct TextImprovementSettings: Codable {
         }
     }
 }
+
+// MARK: - Dictionary (Wispr-Flow-style)
+
+/// A single dictionary entry.
+/// - `spoken`: what you say (the trigger / how it sounds).
+/// - `written`: how it should be written. If empty, the term is simply spelled
+///   exactly as `spoken` (vocabulary). If set, it's a replacement (spoken -> written).
+struct DictionaryEntry: Codable, Identifiable, Hashable {
+    var id: UUID = UUID()
+    var spoken: String = ""
+    var written: String = ""
+
+    var trimmedSpoken: String { spoken.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var trimmedWritten: String { written.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// The form that should appear in the output (written if given, else spoken).
+    var canonicalForm: String { trimmedWritten.isEmpty ? trimmedSpoken : trimmedWritten }
+
+    /// A real replacement only exists when written differs from spoken.
+    var isReplacement: Bool {
+        !trimmedWritten.isEmpty && trimmedWritten.caseInsensitiveCompare(trimmedSpoken) != .orderedSame
+    }
+}
+
+struct DictionarySettings: Codable {
+    var entries: [DictionaryEntry] = []
+
+    /// Terms whose exact spelling should be enforced in the output.
+    var spellingTerms: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for entry in entries {
+            let term = entry.canonicalForm
+            guard !term.isEmpty, seen.insert(term.lowercased()).inserted else { continue }
+            result.append(term)
+        }
+        return result
+    }
+
+    /// Spoken -> written replacements.
+    var replacements: [(from: String, to: String)] {
+        entries.filter { $0.isReplacement }.map { ($0.trimmedSpoken, $0.trimmedWritten) }
+    }
+
+    /// All words worth hinting to the transcription model (spoken + written forms).
+    var vocabulary: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for entry in entries {
+            for term in [entry.trimmedSpoken, entry.trimmedWritten] where !term.isEmpty {
+                if seen.insert(term.lowercased()).inserted { result.append(term) }
+            }
+        }
+        return result
+    }
+}

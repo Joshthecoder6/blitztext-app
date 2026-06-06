@@ -29,6 +29,7 @@ final class TranscriptionWorkflow: Workflow {
     private let smartFormat: Bool
     private let formatSettings: TextImprovementSettings
     private let contextApp: String
+    private let dictionary: [DictionaryEntry]
     private var transcriptionTask: Task<Void, Never>?
 
     init(
@@ -41,7 +42,8 @@ final class TranscriptionWorkflow: Workflow {
         formattingModel: String = OpenRouterConfig.defaultFormattingModel,
         smartFormat: Bool = false,
         formatSettings: TextImprovementSettings = TextImprovementSettings(),
-        contextApp: String = ""
+        contextApp: String = "",
+        dictionary: [DictionaryEntry] = []
     ) {
         self.type = type
         self.customTerms = customTerms
@@ -54,6 +56,7 @@ final class TranscriptionWorkflow: Workflow {
         self.smartFormat = smartFormat && backend == .remote
         self.formatSettings = formatSettings
         self.contextApp = contextApp
+        self.dictionary = dictionary
     }
 
     func start() {
@@ -151,6 +154,7 @@ final class TranscriptionWorkflow: Workflow {
                             text: cleaned,
                             contextApp: contextApp,
                             settings: formatSettings,
+                            dictionary: dictionary,
                             model: formattingModel
                         )
                         try Task.checkCancellation()
