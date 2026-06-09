@@ -255,14 +255,33 @@ actor LocalTranscriptionService {
         }
     }
 
-    func transcribe(audioURL: URL, language: String, modelName: String) async throws -> String {
+    func transcribe(
+        audioURL: URL,
+        language: String,
+        modelName: String,
+        promptTerms: [String] = []
+    ) async throws -> String {
         let resolvedLanguage = language.trimmingCharacters(in: .whitespacesAndNewlines)
-        let decodeOptions = DecodingOptions(
+        let pipeline = try await pipeline(modelName: modelName)
+
+        var decodeOptions = DecodingOptions(
             task: .transcribe,
             language: resolvedLanguage.isEmpty ? nil : resolvedLanguage
         )
 
-        let pipeline = try await pipeline(modelName: modelName)
+        // Bias the recognizer toward dictionary terms via Whisper's prompt tokens.
+        let terms = promptTerms
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !terms.isEmpty, let tokenizer = pipeline.tokenizer {
+            let promptTokens = tokenizer.encode(text: " " + terms.joined(separator: ", "))
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            if !promptTokens.isEmpty {
+                decodeOptions.promptTokens = promptTokens
+                decodeOptions.usePrefillPrompt = true
+            }
+        }
+
         let results = try await pipeline.transcribe(
             audioPath: audioURL.path,
             decodeOptions: decodeOptions

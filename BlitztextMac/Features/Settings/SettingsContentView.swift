@@ -53,29 +53,209 @@ private struct SectionLabel: View {
     }
 }
 
+// MARK: - Provider Configuration (provider + key + models, all in one place)
+
+struct ProviderConfigView: View {
+    @Bindable var appState: AppState
+    @State private var apiKeyInput = ""
+    @State private var editingKey = false
+    @State private var keyError: String?
+    @State private var keySaved = false
+
+    private var provider: AIProvider { appState.providerSettings.provider }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionLabel(text: "Konfiguration")
+
+            // Provider switch
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Anbieter")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Picker("", selection: Binding(
+                    get: { appState.providerSettings.provider },
+                    set: { newValue in
+                        appState.providerSettings.provider = newValue
+                        editingKey = false
+                        apiKeyInput = ""
+                        keyError = nil
+                        appState.modelCatalogError = nil
+                    }
+                )) {
+                    ForEach(AIProvider.allCases) { p in
+                        Text(p.displayName).tag(p)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
+            keySection
+            modelSection
+
+            Toggle("Smarte Formatierung (Llama)", isOn: $appState.appSettings.smartFormattingEnabled)
+                .toggleStyle(.switch)
+                .font(.system(size: 11.5))
+
+            Text("Erkennt Aufzählungen, wendet gesprochene Korrekturen an, entfernt Füllwörter. Der System-Prompt (unten unter Anpassen) wird immer angewandt.")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private var keySection: some View {
+        let hasKey = KeychainService.hasKey(provider.keychainKey)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("\(provider.displayName) API Key")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if hasKey && !editingKey {
+                    Button("Ändern") { editingKey = true; apiKeyInput = "" }
+                        .font(.system(size: 10, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.blue)
+                }
+            }
+
+            if hasKey && !editingKey {
+                HStack(spacing: 6) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.green.opacity(0.8))
+                    Text(appState.apiKeyDisplayValue(for: provider.keychainKey))
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+            } else {
+                HStack(spacing: 8) {
+                    SecureField(provider.keyPlaceholder, text: $apiKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11.5))
+                        .onSubmit { saveKey() }
+                    Button("Speichern") { saveKey() }
+                        .buttonStyle(SubtleButtonStyle())
+                        .foregroundStyle(.blue)
+                        .disabled(apiKeyInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+
+            if let keyError {
+                Text(keyError).font(.system(size: 10.5)).foregroundStyle(.red)
+            } else if keySaved {
+                Text("Gespeichert.").font(.system(size: 10.5)).foregroundStyle(.green)
+            }
+
+            Text("Bleibt lokal im Keychain. Key erstellen unter \(provider.keyConsoleURL).")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    @ViewBuilder
+    private var modelSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Modelle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if appState.isLoadingModelCatalog {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Modelle laden") { appState.loadModelCatalog() }
+                        .font(.system(size: 10, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.blue)
+                }
+            }
+
+            modelPicker(
+                title: "Transkription",
+                options: appState.transcriptionModelOptions(),
+                selection: Binding(
+                    get: { appState.providerSettings.currentTranscriptionModel },
+                    set: { appState.providerSettings.setTranscriptionModel($0, for: provider) }
+                )
+            )
+
+            modelPicker(
+                title: "Sprachmodell (LLM)",
+                options: appState.formattingModelOptions(),
+                selection: Binding(
+                    get: { appState.providerSettings.currentFormattingModel },
+                    set: { appState.providerSettings.setFormattingModel($0, for: provider) }
+                )
+            )
+
+            if let err = appState.modelCatalogError {
+                Text(err).font(.system(size: 10.5)).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if appState.currentCatalog == nil {
+                Text("Tipp: \u{201E}Modelle laden\u{201C} holt die aktuelle Liste von \(provider.displayName).")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func modelPicker(title: String, options: [String], selection: Binding<String>) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .frame(width: 120, alignment: .leading)
+            Picker("", selection: selection) {
+                ForEach(options, id: \.self) { model in
+                    Text(model).tag(model)
+                }
+            }
+            .labelsHidden()
+            .controlSize(.small)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func saveKey() {
+        let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            keyError = "Bitte trage deinen \(provider.displayName) API Key ein."
+            return
+        }
+        KeychainService.invalidateCache()
+        do {
+            try KeychainService.save(key: provider.keychainKey, value: trimmed)
+            apiKeyInput = ""
+            editingKey = false
+            keyError = nil
+            keySaved = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { keySaved = false }
+        } catch {
+            keyError = "\(provider.displayName) API Key konnte nicht gespeichert werden."
+        }
+    }
+}
+
 // MARK: - Access Settings (Tab 1: Zugang)
 
 struct AccessSettingsView: View {
-    private static let openRouterAPIKeyPattern = #"^sk-(or-)?[A-Za-z0-9_-]{20,}$"#
-
     @Bindable var appState: AppState
-
-    private enum FieldFocus {
-        case openRouterAPIKey
-    }
 
     @State private var launchAtLoginService = LaunchAtLoginService()
     @State private var currentInstallLocation = BlitztextInstallLocationService.currentInstallLocation
-    @State private var openRouterAPIKey = ""
-    @State private var editingAPIKey = false
-    @State private var saved = false
-    @State private var saveErrorText: String?
     @State private var installActionErrorText: String?
     @State private var showCleanupOptions = false
     @State private var deleteLocalDataOnCleanup = true
     @State private var cleanupStatusText: String?
     @State private var cleanupErrorText: String?
-    @FocusState private var focusedField: FieldFocus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -113,52 +293,7 @@ struct AccessSettingsView: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    SectionLabel(text: "OpenRouter API Key")
-                    Spacer()
-                    if appState.hasValue(for: .openRouterAPIKey) && !editingAPIKey {
-                        Button("Aendern") { editingAPIKey = true }
-                            .font(.system(size: 10, weight: .medium))
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.blue)
-                    }
-                }
-
-                if appState.hasValue(for: .openRouterAPIKey) && !editingAPIKey {
-                    HStack(spacing: 6) {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.green.opacity(0.8))
-                        Text(appState.apiKeyDisplayValue(for: .openRouterAPIKey))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-                } else {
-                    HStack(spacing: 8) {
-                        SecureField("sk-or-...", text: $openRouterAPIKey)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 11.5))
-                            .focused($focusedField, equals: .openRouterAPIKey)
-
-                        Button("Einfuegen") {
-                            pasteAPIKeyFromClipboard()
-                        }
-                        .buttonStyle(SubtleButtonStyle())
-                    }
-                }
-
-                Text("Dein Key bleibt lokal in dieser App. Audio und Text werden direkt an die OpenRouter API gesendet (Transkription via Whisper, Formatierung via Llama). Key erstellen unter openrouter.ai/keys.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            ProviderConfigView(appState: appState)
 
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Installation")
@@ -253,13 +388,6 @@ struct AccessSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if let saveErrorText {
-                Text(saveErrorText)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
             VStack(alignment: .leading, spacing: 6) {
                 SectionLabel(text: "Hinweis")
 
@@ -330,96 +458,12 @@ struct AccessSettingsView: View {
                 }
             }
 
-            // Save button (right-aligned, text only)
-            HStack {
-                Spacer()
-                Button {
-                    save()
-                } label: {
-                    if saved {
-                        HStack(spacing: 4) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .bold))
-                            Text("Gespeichert")
-                        }
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.green)
-                    } else {
-                        Text("Speichern")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.blue)
-                    }
-                }
-                .buttonStyle(SubtleButtonStyle())
-                .animation(.easeInOut(duration: 0.2), value: saved)
-            }
         }
         .padding(16)
         .onAppear {
             launchAtLoginService.refresh()
             refreshInstallState()
-            load()
-            if !appState.hasValue(for: .openRouterAPIKey) {
-                editingAPIKey = true
-                focusedField = .openRouterAPIKey
-            }
         }
-    }
-
-    private func load() {
-        openRouterAPIKey = ""
-    }
-
-    private func save() {
-        saveErrorText = nil
-        cleanupStatusText = nil
-        cleanupErrorText = nil
-        KeychainService.invalidateCache()
-        let trimmedAPIKey = openRouterAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if editingAPIKey || !appState.hasValue(for: .openRouterAPIKey) {
-            guard !trimmedAPIKey.isEmpty else {
-                saveErrorText = "Bitte trage deinen OpenRouter API Key ein."
-                return
-            }
-            do {
-                try KeychainService.save(key: .openRouterAPIKey, value: trimmedAPIKey)
-                openRouterAPIKey = ""
-                editingAPIKey = false
-            } catch {
-                saveErrorText = "OpenRouter API Key konnte nicht gespeichert werden."
-                return
-            }
-        }
-
-        KeychainService.invalidateCache()
-        if !appState.hasValue(for: .openRouterAPIKey) {
-            saveErrorText = "OpenRouter API Key wurde nicht persistent gespeichert. Bitte App neu starten und erneut versuchen."
-            return
-        }
-
-        withAnimation(.easeInOut(duration: 0.2)) { saved = true }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            withAnimation(.easeInOut(duration: 0.2)) { saved = false }
-        }
-    }
-
-    private func pasteAPIKeyFromClipboard() {
-        guard let rawText = NSPasteboard.general.string(forType: .string) else {
-            saveErrorText = "Zwischenablage enthält keinen Text."
-            return
-        }
-
-        let firstLine = rawText.components(separatedBy: .newlines).first ?? rawText
-        let trimmedKey = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedKey.range(of: Self.openRouterAPIKeyPattern, options: .regularExpression) != nil else {
-            saveErrorText = "Zwischenablage enthält keinen plausiblen OpenRouter API Key."
-            return
-        }
-
-        openRouterAPIKey = trimmedKey
-        NSPasteboard.general.clearContents()
-        saveErrorText = nil
     }
 
     private var installationHeadline: String {
@@ -477,11 +521,6 @@ struct AccessSettingsView: View {
         KeychainService.invalidateCache()
         launchAtLoginService.refresh()
         refreshInstallState()
-
-        if deleteLocalDataOnCleanup {
-            openRouterAPIKey = ""
-            editingAPIKey = true
-        }
 
         if report.failedItems.isEmpty {
             cleanupStatusText = deleteLocalDataOnCleanup
@@ -590,6 +629,17 @@ struct CustomizeSettingsView: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+
+                Divider().padding(.vertical, 2)
+
+                Toggle("Auch lokal formatieren (über Cloud-LLM)", isOn: $appState.providerSettings.formatLocalTranscription)
+                    .toggleStyle(.switch)
+                    .font(.system(size: 11.5))
+
+                Text("Standard aus = bleibt komplett offline (nur Whisper auf dem Gerät). An = der lokale Text wird zur Formatierung an den gewählten Anbieter geschickt (verlässt das Gerät). Wörterbuch-Begriffe gibt Blitztext Whisper ohnehin als lokalen Aussprache-Hinweis mit.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             // MARK: Tastenkuerzel
@@ -616,39 +666,12 @@ struct CustomizeSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            // MARK: Modelle
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel(text: "Modelle (OpenRouter)")
-
-                Toggle("Smarte Formatierung (Llama)", isOn: $appState.appSettings.smartFormattingEnabled)
-                    .toggleStyle(.switch)
-
-                Text("Erkennt Aufzählungen, wendet gesprochene Korrekturen an und entfernt Füllwörter – HushType-Diktat-Logik. Aus = nur reine Transkription.")
+            // MARK: Anbieter & Modelle (Hinweis – konfiguriert unter „Zugang")
+            VStack(alignment: .leading, spacing: 6) {
+                SectionLabel(text: "Anbieter & Modelle")
+                Text("Anbieter (OpenRouter / Groq), API-Key und Modelle wählst du oben unter \u{201E}Zugang \u{2192} Konfiguration\u{201C}.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Whisper-Modell (selbst wählbar)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    TextField(OpenRouterConfig.defaultTranscriptionModel, text: $appState.appSettings.transcriptionModel)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Llama-Modell")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    TextField(OpenRouterConfig.defaultFormattingModel, text: $appState.appSettings.formattingModel)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 11, design: .monospaced))
-                }
-
-                Text("OpenRouter-Modell-IDs, Standard: openai/whisper-large-v3-turbo und meta-llama/llama-3.3-70b-instruct.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 

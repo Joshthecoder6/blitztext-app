@@ -123,9 +123,9 @@ struct AppSettings: Codable {
     var selectedLocalTranscriptionModelName: String = LocalTranscriptionService.recommendedFastModelName
     var hasAutoSelectedFastLocalModel: Bool = false
     /// OpenRouter Whisper model id used for transcription (user-selectable).
-    var transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel
+    var transcriptionModel: String = AIProvider.openRouter.defaultTranscriptionModel
     /// OpenRouter Llama model id used for the smart formatting / rewrites.
-    var formattingModel: String = OpenRouterConfig.defaultFormattingModel
+    var formattingModel: String = AIProvider.openRouter.defaultFormattingModel
     /// When on, the main dictation hotkey runs the Llama smart formatting after transcription.
     var smartFormattingEnabled: Bool = true
 
@@ -135,8 +135,8 @@ struct AppSettings: Codable {
         secureLocalModeEnabled: Bool = false,
         selectedLocalTranscriptionModelName: String = LocalTranscriptionService.recommendedFastModelName,
         hasAutoSelectedFastLocalModel: Bool = false,
-        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
-        formattingModel: String = OpenRouterConfig.defaultFormattingModel,
+        transcriptionModel: String = AIProvider.openRouter.defaultTranscriptionModel,
+        formattingModel: String = AIProvider.openRouter.defaultFormattingModel,
         smartFormattingEnabled: Bool = true
     ) {
         self.hotkeyMode = hotkeyMode
@@ -178,12 +178,12 @@ struct AppSettings: Codable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         transcriptionModel = (storedTranscription?.isEmpty == false)
             ? storedTranscription!
-            : OpenRouterConfig.defaultTranscriptionModel
+            : AIProvider.openRouter.defaultTranscriptionModel
         let storedFormatting = ((try? container.decodeIfPresent(String.self, forKey: .formattingModel)) ?? nil)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         formattingModel = (storedFormatting?.isEmpty == false)
             ? storedFormatting!
-            : OpenRouterConfig.defaultFormattingModel
+            : AIProvider.openRouter.defaultFormattingModel
         smartFormattingEnabled = try container.decodeIfPresent(Bool.self, forKey: .smartFormattingEnabled) ?? true
     }
 }
@@ -191,6 +191,78 @@ struct AppSettings: Codable {
 enum TranscriptionBackend: String, Codable {
     case remote
     case local
+}
+
+// MARK: - Provider Settings
+
+/// The selected AI provider plus the model chosen per provider, so switching
+/// back and forth keeps each provider's selection.
+struct ProviderSettings: Codable {
+    var provider: AIProvider = .openRouter
+    var openRouterTranscriptionModel: String = AIProvider.openRouter.defaultTranscriptionModel
+    var openRouterFormattingModel: String = AIProvider.openRouter.defaultFormattingModel
+    var groqTranscriptionModel: String = AIProvider.groq.defaultTranscriptionModel
+    var groqFormattingModel: String = AIProvider.groq.defaultFormattingModel
+    /// Also run the cloud LLM formatting after local (offline) transcription.
+    /// Off by default so secure local mode stays fully offline.
+    var formatLocalTranscription: Bool = false
+
+    init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case provider
+        case openRouterTranscriptionModel
+        case openRouterFormattingModel
+        case groqTranscriptionModel
+        case groqFormattingModel
+        case formatLocalTranscription
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        provider = ((try? c.decodeIfPresent(AIProvider.self, forKey: .provider)) ?? nil) ?? .openRouter
+        openRouterTranscriptionModel = Self.nonEmpty(c, .openRouterTranscriptionModel) ?? AIProvider.openRouter.defaultTranscriptionModel
+        openRouterFormattingModel = Self.nonEmpty(c, .openRouterFormattingModel) ?? AIProvider.openRouter.defaultFormattingModel
+        groqTranscriptionModel = Self.nonEmpty(c, .groqTranscriptionModel) ?? AIProvider.groq.defaultTranscriptionModel
+        groqFormattingModel = Self.nonEmpty(c, .groqFormattingModel) ?? AIProvider.groq.defaultFormattingModel
+        formatLocalTranscription = (try? c.decodeIfPresent(Bool.self, forKey: .formatLocalTranscription)) ?? false ?? false
+    }
+
+    private static func nonEmpty(_ c: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
+        let v = ((try? c.decodeIfPresent(String.self, forKey: key)) ?? nil)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (v?.isEmpty == false) ? v : nil
+    }
+
+    func transcriptionModel(for p: AIProvider) -> String {
+        switch p {
+        case .openRouter: return openRouterTranscriptionModel
+        case .groq: return groqTranscriptionModel
+        }
+    }
+
+    func formattingModel(for p: AIProvider) -> String {
+        switch p {
+        case .openRouter: return openRouterFormattingModel
+        case .groq: return groqFormattingModel
+        }
+    }
+
+    mutating func setTranscriptionModel(_ m: String, for p: AIProvider) {
+        switch p {
+        case .openRouter: openRouterTranscriptionModel = m
+        case .groq: groqTranscriptionModel = m
+        }
+    }
+
+    mutating func setFormattingModel(_ m: String, for p: AIProvider) {
+        switch p {
+        case .openRouter: openRouterFormattingModel = m
+        case .groq: groqFormattingModel = m
+        }
+    }
+
+    var currentTranscriptionModel: String { transcriptionModel(for: provider) }
+    var currentFormattingModel: String { formattingModel(for: provider) }
 }
 
 // MARK: - Workflow Settings

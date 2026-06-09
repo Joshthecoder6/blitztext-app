@@ -24,6 +24,7 @@ final class TranscriptionWorkflow: Workflow {
     private let language: String
     private let backend: TranscriptionBackend
     private let localModelName: String
+    private let provider: AIProvider
     private let transcriptionModel: String
     private let formattingModel: String
     private let smartFormat: Bool
@@ -38,8 +39,9 @@ final class TranscriptionWorkflow: Workflow {
         language: String = "de",
         backend: TranscriptionBackend = .remote,
         localModelName: String = LocalTranscriptionService.recommendedFastModelName,
-        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
-        formattingModel: String = OpenRouterConfig.defaultFormattingModel,
+        provider: AIProvider = .openRouter,
+        transcriptionModel: String = AIProvider.openRouter.defaultTranscriptionModel,
+        formattingModel: String = AIProvider.openRouter.defaultFormattingModel,
         smartFormat: Bool = false,
         formatSettings: TextImprovementSettings = TextImprovementSettings(),
         contextApp: String = "",
@@ -50,10 +52,12 @@ final class TranscriptionWorkflow: Workflow {
         self.language = language
         self.backend = backend
         self.localModelName = localModelName
+        self.provider = provider
         self.transcriptionModel = transcriptionModel
         self.formattingModel = formattingModel
-        // Smart formatting only runs against the online backend (it needs the Llama model).
-        self.smartFormat = smartFormat && backend == .remote
+        // The caller decides whether formatting runs (and for local mode, whether the
+        // text may leave the device); formatting always uses the cloud provider.
+        self.smartFormat = smartFormat
         self.formatSettings = formatSettings
         self.contextApp = contextApp
         self.dictionary = dictionary
@@ -121,13 +125,15 @@ final class TranscriptionWorkflow: Workflow {
                         audioURL: url,
                         customTerms: vocabularyHints,
                         language: requestLanguage,
+                        provider: provider,
                         model: transcriptionModel
                     )
                 case .local:
                     text = try await LocalTranscriptionService.shared.transcribe(
                         audioURL: url,
                         language: requestLanguage,
-                        modelName: localModelName
+                        modelName: localModelName,
+                        promptTerms: vocabularyHints
                     )
                 }
                 try Task.checkCancellation()
@@ -155,6 +161,7 @@ final class TranscriptionWorkflow: Workflow {
                             contextApp: contextApp,
                             settings: formatSettings,
                             dictionary: dictionary,
+                            provider: provider,
                             model: formattingModel
                         )
                         try Task.checkCancellation()

@@ -16,6 +16,7 @@ final class EmojiTextWorkflow: Workflow {
     private let settings: EmojiTextSettings
     private let customTerms: [String]
     private let language: String
+    private let provider: AIProvider
     private let transcriptionModel: String
     private let formattingModel: String
     private var processingTask: Task<Void, Never>?
@@ -24,12 +25,14 @@ final class EmojiTextWorkflow: Workflow {
         settings: EmojiTextSettings,
         customTerms: [String] = [],
         language: String = "de",
-        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
-        formattingModel: String = OpenRouterConfig.defaultFormattingModel
+        provider: AIProvider = .openRouter,
+        transcriptionModel: String = AIProvider.openRouter.defaultTranscriptionModel,
+        formattingModel: String = AIProvider.openRouter.defaultFormattingModel
     ) {
         self.settings = settings
         self.customTerms = customTerms
         self.language = language
+        self.provider = provider
         self.transcriptionModel = transcriptionModel
         self.formattingModel = formattingModel
     }
@@ -97,6 +100,7 @@ final class EmojiTextWorkflow: Workflow {
                     audioURL: url,
                     customTerms: vocabularyHints,
                     language: language,
+                    provider: provider,
                     model: transcriptionModel
                 )
                 let cleanedRawText = TranscriptionQualityService.cleanedTranscript(rawText)
@@ -113,6 +117,7 @@ final class EmojiTextWorkflow: Workflow {
                 let result = try await LLMService.addEmojis(
                     text: cleanedRawText,
                     settings: settings,
+                    provider: provider,
                     model: formattingModel
                 )
                 let cleanedResult = TranscriptionQualityService.cleanedTranscript(result)

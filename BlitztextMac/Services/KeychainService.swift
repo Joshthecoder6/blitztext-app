@@ -3,10 +3,12 @@ import Security
 
 enum KeychainKey: String, CaseIterable, Codable {
     case openRouterAPIKey = "openRouterAPIKey"
+    case groqAPIKey = "groqAPIKey"
 
     var label: String {
         switch self {
         case .openRouterAPIKey: return "OpenRouter API Key"
+        case .groqAPIKey: return "Groq API Key"
         }
     }
 }
@@ -67,7 +69,11 @@ enum KeychainService {
     }
 
     static var isConfigured: Bool {
-        load(key: .openRouterAPIKey) != nil
+        KeychainKey.allCases.contains { load(key: $0) != nil }
+    }
+
+    static func hasKey(_ key: KeychainKey) -> Bool {
+        load(key: key) != nil
     }
 
     private static func baseQuery(for key: KeychainKey) -> [String: Any] {

@@ -130,7 +130,7 @@ struct MenuBarView: View {
                     .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(appState.appSettings.secureLocalModeEnabled ? "Sicherer lokaler Modus" : "Online (OpenRouter)")
+                    Text(appState.appSettings.secureLocalModeEnabled ? "Sicherer lokaler Modus" : "Online (\(appState.providerSettings.provider.displayName))")
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(.primary)
 
@@ -224,8 +224,8 @@ struct MenuBarView: View {
         }
 
         return appState.appSettings.smartFormattingEnabled
-            ? "Whisper + Llama-Formatierung über OpenRouter."
-            : "Whisper über OpenRouter."
+            ? "Transkription + Llama über \(appState.providerSettings.provider.displayName)."
+            : "Transkription über \(appState.providerSettings.provider.displayName)."
     }
 
     private var accessibilityHintBanner: some View {
@@ -353,7 +353,7 @@ struct MenuBarView: View {
                         Text("Einmal einrichten, dann direkt loslegen.")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)
-                        Text("Eigenen OpenRouter API Key eintragen. Danach mit fn + Leertaste sprechen und einfügen.")
+                        Text("Anbieter wählen und eigenen API Key eintragen. Danach mit fn + Leertaste sprechen und einfügen.")
                             .font(.system(size: 11.5))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -365,7 +365,7 @@ struct MenuBarView: View {
                         onboardingInstallCard
                     }
 
-                    onboardingStep(number: "1", title: "OpenRouter Key speichern", detail: "Öffne die Einstellungen und trage deinen eigenen OpenRouter API Key ein (openrouter.ai/keys).")
+                    onboardingStep(number: "1", title: "Anbieter & Key", detail: "Einstellungen → Zugang → Konfiguration: Anbieter (OpenRouter/Groq) wählen und API Key eintragen.")
                     onboardingStep(number: "2", title: "Berechtigungen erlauben", detail: "Mikrofon und Bedienungshilfen freigeben – Bedienungshilfen braucht es auch für das Tastenkürzel.")
                     onboardingStep(number: "3", title: "fn + Leertaste drücken", detail: "Einmal drücken zum Sprechen, nochmal zum Beenden. Der Text wird formatiert und eingefügt.")
                 }

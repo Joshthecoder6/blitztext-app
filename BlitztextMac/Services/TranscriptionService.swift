@@ -15,18 +15,18 @@ enum TranscriptionError: LocalizedError {
         case .noFile:
             return "Keine Audio-Datei gefunden"
         case .notConfigured:
-            return "OpenRouter API Key fehlt. Bitte in den Einstellungen hinterlegen."
+            return "API Key fehlt. Bitte in den Einstellungen hinterlegen."
         case .networkError(let msg):
             return "Netzwerkfehler: \(msg)"
         case .apiError(let msg):
-            return "OpenRouter-Fehler: \(msg)"
+            return "Fehler bei der Transkription: \(msg)"
         case .emptyResult:
             return "Aufnahme war leer (kein Text erkannt). Prüfe Mikrofon-Zugriff und Eingabegerät und sprich etwas lauter/länger."
         }
     }
 }
 
-private struct TranscriptionRequest: Encodable {
+private struct JSONTranscriptionRequest: Encodable {
     struct InputAudio: Encodable {
         let data: String
         let format: String
@@ -36,7 +36,7 @@ private struct TranscriptionRequest: Encodable {
     let input_audio: InputAudio
     let language: String?
     let temperature: Double
-    let provider: OpenRouterConfig.ProviderPreference?
+    let provider: ProviderRouting?
 }
 
 private struct TranscriptionResponse: Decodable {
@@ -61,20 +61,14 @@ enum TranscriptionService {
         return URLSession(configuration: configuration)
     }()
 
-    /// Transcribes audio with a Whisper / transcription model via OpenRouter's
-    /// dedicated speech-to-text endpoint (JSON body with base64-encoded audio,
-    /// `temperature=0`).
-    ///
-    /// - Note: `customTerms` is accepted for call-site compatibility. The
-    ///   transcription endpoint has no vocabulary/prompt field, so exact spelling
-    ///   of proper nouns is enforced later in the Llama formatting step instead.
     static func transcribe(
         audioURL: URL,
         customTerms: [String] = [],
         language: String? = nil,
-        model: String = OpenRouterConfig.defaultTranscriptionModel
+        provider: AIProvider,
+        model: String
     ) async throws -> String {
-        guard let apiKey = KeychainService.load(key: .openRouterAPIKey) else {
+        guard let apiKey = KeychainService.load(key: provider.keychainKey) else {
             throw TranscriptionError.notConfigured
         }
 
@@ -85,29 +79,39 @@ enum TranscriptionService {
 
             let audioData = try Data(contentsOf: audioURL, options: [.mappedIfSafe])
             let trimmedLanguage = language?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lang = (trimmedLanguage?.isEmpty == false) ? trimmedLanguage : nil
             let audioFormat = format(for: audioURL)
 
-            sttLogger.info("STT request model=\(model, privacy: .public) format=\(audioFormat, privacy: .public) audioBytes=\(audioData.count, privacy: .public) lang=\(trimmedLanguage ?? "auto", privacy: .public)")
+            sttLogger.info("STT request provider=\(provider.rawValue, privacy: .public) model=\(model, privacy: .public) format=\(audioFormat, privacy: .public) audioBytes=\(audioData.count, privacy: .public)")
 
-            let payload = TranscriptionRequest(
-                model: model,
-                input_audio: .init(
-                    data: audioData.base64EncodedString(),
-                    format: audioFormat
-                ),
-                language: (trimmedLanguage?.isEmpty == false) ? trimmedLanguage : nil,
-                temperature: 0,
-                provider: OpenRouterConfig.transcriptionProvider
-            )
-
-            var request = URLRequest(url: OpenRouterConfig.transcriptionsURL)
+            var request = URLRequest(url: provider.transcriptionsURL)
             request.httpMethod = "POST"
-            OpenRouterConfig.authorize(&request, apiKey: apiKey)
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            provider.authorize(&request, apiKey: apiKey)
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             request.timeoutInterval = 60
             request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.httpBody = try JSONEncoder().encode(payload)
+
+            if provider.transcriptionUsesMultipart {
+                let boundary = UUID().uuidString
+                request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+                request.httpBody = multipartBody(
+                    boundary: boundary,
+                    audioData: audioData,
+                    model: model,
+                    language: lang,
+                    customTerms: customTerms
+                )
+            } else {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                let payload = JSONTranscriptionRequest(
+                    model: model,
+                    input_audio: .init(data: audioData.base64EncodedString(), format: audioFormat),
+                    language: lang,
+                    temperature: 0,
+                    provider: provider.supportsProviderRouting ? ProviderRouting(sort: "throughput") : nil
+                )
+                request.httpBody = try JSONEncoder().encode(payload)
+            }
 
             let (data, response) = try await session.data(for: request)
 
@@ -133,9 +137,44 @@ enum TranscriptionService {
                 throw TranscriptionError.emptyResult
             }
 
-            sttLogger.info("STT ok responseBytes=\(data.count, privacy: .public) chars=\(text.count, privacy: .public)")
+            sttLogger.info("STT ok chars=\(text.count, privacy: .public)")
             return text
         }.value
+    }
+
+    private static func multipartBody(
+        boundary: String,
+        audioData: Data,
+        model: String,
+        language: String?,
+        customTerms: [String]
+    ) -> Data {
+        var body = Data()
+        func field(_ name: String, _ value: String) {
+            body.append("--\(boundary)\r\n")
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+            body.append(value)
+            body.append("\r\n")
+        }
+
+        body.append("--\(boundary)\r\n")
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"audio.m4a\"\r\n")
+        body.append("Content-Type: audio/m4a\r\n\r\n")
+        body.append(audioData)
+        body.append("\r\n")
+
+        field("model", model)
+        field("response_format", "json")
+        field("temperature", "0")
+        if !customTerms.isEmpty {
+            field("prompt", "Eigennamen und Begriffe: \(customTerms.joined(separator: ", "))")
+        }
+        if let language, !language.isEmpty {
+            field("language", language)
+        }
+
+        body.append("--\(boundary)--\r\n")
+        return body
     }
 
     private static func format(for url: URL) -> String {
@@ -145,5 +184,13 @@ enum TranscriptionService {
 
     private static func errorMessage(from data: Data) -> String? {
         (try? JSONDecoder().decode(TranscriptionErrorResponse.self, from: data))?.error?.message
+    }
+}
+
+private extension Data {
+    mutating func append(_ string: String) {
+        if let data = string.data(using: .utf8) {
+            append(data)
+        }
     }
 }

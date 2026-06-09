@@ -15,6 +15,7 @@ final class TextImprovementWorkflow: Workflow {
     private let recorder = AudioRecorder()
     private let settings: TextImprovementSettings
     private let language: String
+    private let provider: AIProvider
     private let transcriptionModel: String
     private let formattingModel: String
     private let vocabulary: [String]
@@ -24,13 +25,15 @@ final class TextImprovementWorkflow: Workflow {
     init(
         settings: TextImprovementSettings,
         language: String = "de",
-        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
-        formattingModel: String = OpenRouterConfig.defaultFormattingModel,
+        provider: AIProvider = .openRouter,
+        transcriptionModel: String = AIProvider.openRouter.defaultTranscriptionModel,
+        formattingModel: String = AIProvider.openRouter.defaultFormattingModel,
         vocabulary: [String] = [],
         dictionary: [DictionaryEntry] = []
     ) {
         self.settings = settings
         self.language = language
+        self.provider = provider
         self.transcriptionModel = transcriptionModel
         self.formattingModel = formattingModel
         self.vocabulary = vocabulary
@@ -100,6 +103,7 @@ final class TextImprovementWorkflow: Workflow {
                     audioURL: url,
                     customTerms: vocabularyHints,
                     language: language,
+                    provider: provider,
                     model: transcriptionModel
                 )
                 let cleanedRawText = TranscriptionQualityService.cleanedTranscript(rawText)
@@ -117,6 +121,7 @@ final class TextImprovementWorkflow: Workflow {
                     text: cleanedRawText,
                     settings: settings,
                     dictionary: dictionary,
+                    provider: provider,
                     model: formattingModel
                 )
 

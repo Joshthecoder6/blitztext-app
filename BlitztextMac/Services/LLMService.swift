@@ -9,18 +9,18 @@ enum LLMError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "OpenRouter API Key fehlt. Bitte in den Einstellungen hinterlegen."
+            return "API Key fehlt. Bitte in den Einstellungen hinterlegen."
         case .networkError(let msg):
             return "Verbindungsproblem: \(msg)"
         case .apiError(let msg):
-            return "Fehler von OpenRouter: \(msg)"
+            return "Fehler vom Anbieter: \(msg)"
         case .noContent:
             return "Keine Antwort erhalten. Bitte nochmal versuchen."
         }
     }
 }
 
-private struct OpenRouterChatRequest: Encodable {
+private struct ChatRequest: Encodable {
     struct Message: Encodable {
         let role: String
         let content: String
@@ -31,10 +31,10 @@ private struct OpenRouterChatRequest: Encodable {
     let temperature: Double
     let top_p: Double?
     let max_tokens: Int?
-    let provider: OpenRouterConfig.ProviderPreference?
+    let provider: ProviderRouting?
 }
 
-private struct OpenRouterChatResponse: Decodable {
+private struct ChatResponse: Decodable {
     struct Choice: Decodable {
         struct Message: Decodable {
             let content: String?
@@ -46,7 +46,7 @@ private struct OpenRouterChatResponse: Decodable {
     let choices: [Choice]?
 }
 
-private struct OpenRouterErrorResponse: Decodable {
+private struct ChatErrorResponse: Decodable {
     struct APIError: Decodable {
         let message: String?
     }
@@ -66,23 +66,22 @@ enum LLMService {
 
     // MARK: - Smart Dictation (HushType prompt)
 
-    /// Cleans up a raw dictation transcript with the exact HushType dictation
-    /// prompt: applies spoken corrections, detects ordered/unordered lists,
-    /// removes filler words, and adapts tone to the context app.
     static func smartFormat(
         text: String,
         contextApp: String,
         settings: TextImprovementSettings,
         dictionary: [DictionaryEntry] = [],
-        model: String = OpenRouterConfig.defaultFormattingModel
+        provider: AIProvider,
+        model: String
     ) async throws -> String {
         try await complete(
             text: text,
             systemPrompt: dictatePrompt(contextApp: contextApp, settings: settings, dictionary: dictionary),
+            provider: provider,
             model: model,
             temperature: 0,
-            topP: OpenRouterConfig.llamaTopP,
-            maxTokens: OpenRouterConfig.llamaMaxTokens
+            topP: LlamaParams.topP,
+            maxTokens: LlamaParams.maxTokens
         )
     }
 
@@ -92,61 +91,68 @@ enum LLMService {
         text: String,
         settings: TextImprovementSettings,
         dictionary: [DictionaryEntry] = [],
-        model: String = OpenRouterConfig.defaultFormattingModel
+        provider: AIProvider,
+        model: String
     ) async throws -> String {
         try await complete(
             text: text,
             systemPrompt: buildSystemPrompt(settings: settings) + dictionaryInstructions(dictionary),
+            provider: provider,
             model: model,
             temperature: 0.3,
             topP: nil,
-            maxTokens: OpenRouterConfig.llamaMaxTokens
+            maxTokens: LlamaParams.maxTokens
         )
     }
 
     static func dampfAblassen(
         text: String,
         systemPrompt: String,
-        model: String = OpenRouterConfig.defaultFormattingModel
+        provider: AIProvider,
+        model: String
     ) async throws -> String {
         try await complete(
             text: text,
             systemPrompt: systemPrompt,
+            provider: provider,
             model: model,
             temperature: 0.4,
             topP: nil,
-            maxTokens: OpenRouterConfig.llamaMaxTokens
+            maxTokens: LlamaParams.maxTokens
         )
     }
 
     static func addEmojis(
         text: String,
         settings: EmojiTextSettings,
-        model: String = OpenRouterConfig.defaultFormattingModel
+        provider: AIProvider,
+        model: String
     ) async throws -> String {
         try await complete(
             text: text,
             systemPrompt: buildEmojiSystemPrompt(density: settings.emojiDensity),
+            provider: provider,
             model: model,
             temperature: 0.3,
             topP: nil,
-            maxTokens: OpenRouterConfig.llamaMaxTokens
+            maxTokens: LlamaParams.maxTokens
         )
     }
 
     private static func complete(
         text: String,
         systemPrompt: String,
+        provider: AIProvider,
         model: String,
         temperature: Double,
         topP: Double?,
         maxTokens: Int?
     ) async throws -> String {
-        guard let apiKey = KeychainService.load(key: .openRouterAPIKey) else {
+        guard let apiKey = KeychainService.load(key: provider.keychainKey) else {
             throw LLMError.notConfigured
         }
 
-        let payload = OpenRouterChatRequest(
+        let payload = ChatRequest(
             model: model,
             messages: [
                 .init(role: "system", content: systemPrompt),
@@ -155,12 +161,12 @@ enum LLMService {
             temperature: temperature,
             top_p: topP,
             max_tokens: maxTokens,
-            provider: OpenRouterConfig.llamaProvider
+            provider: provider.chatProviderRouting
         )
 
-        var request = URLRequest(url: OpenRouterConfig.chatCompletionsURL)
+        var request = URLRequest(url: provider.chatCompletionsURL)
         request.httpMethod = "POST"
-        OpenRouterConfig.authorize(&request, apiKey: apiKey)
+        provider.authorize(&request, apiKey: apiKey)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 45
         request.httpBody = try JSONEncoder().encode(payload)
@@ -175,7 +181,7 @@ enum LLMService {
             throw LLMError.apiError(errorMessage(from: data) ?? "Status \(httpResponse.statusCode)")
         }
 
-        let result = try JSONDecoder().decode(OpenRouterChatResponse.self, from: data)
+        let result = try JSONDecoder().decode(ChatResponse.self, from: data)
         guard let content = result.choices?.first?.message?.content,
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LLMError.noContent
@@ -185,14 +191,11 @@ enum LLMService {
     }
 
     private static func errorMessage(from data: Data) -> String? {
-        (try? JSONDecoder().decode(OpenRouterErrorResponse.self, from: data))?.error?.message
+        (try? JSONDecoder().decode(ChatErrorResponse.self, from: data))?.error?.message
     }
 
     // MARK: - Prompts
 
-    /// The HushType dictation system prompt. Static core + a dynamic line for the
-    /// context app, plus optional reinforcement for the user's custom terms /
-    /// instruction so the in-app customization keeps working.
     /// A "WÖRTERBUCH" prompt block from the dictionary: exact spellings + replacements.
     private static func dictionaryInstructions(_ entries: [DictionaryEntry]) -> String {
         let dict = DictionarySettings(entries: entries)
@@ -290,10 +293,6 @@ enum LLMService {
             prompt += "\n- Verwende einen neutralen, klaren Ton"
         case .casual:
             prompt += "\n- Verwende einen lockeren, natuerlichen Ton"
-        }
-
-        if !settings.customTerms.isEmpty {
-            prompt += "\n\nWichtig: Diese Eigennamen und Fachbegriffe muessen exakt so geschrieben werden: \(settings.customTerms.joined(separator: ", "))"
         }
 
         if !settings.context.isEmpty {

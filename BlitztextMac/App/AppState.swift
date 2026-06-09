@@ -57,16 +57,76 @@ final class AppState {
     var dictionarySettings: DictionarySettings {
         didSet { saveSettings() }
     }
+    var providerSettings: ProviderSettings {
+        didSet { saveSettings() }
+    }
 
     // Hotkeys
     let hotkeyService = HotkeyService()
 
     // Computed
+    /// Whether the currently selected provider has an API key stored.
+    var providerConfigured: Bool {
+        KeychainService.hasKey(providerSettings.provider.keychainKey)
+    }
     var isConfigured: Bool {
-        KeychainService.isConfigured || !LocalTranscriptionService.installedModels().isEmpty
+        providerConfigured || !LocalTranscriptionService.installedModels().isEmpty
     }
     var shouldShowOnboarding: Bool {
         !isConfigured && !appSettings.hasSeenOnboarding
+    }
+
+    // MARK: - Model Catalog (dynamic per provider)
+
+    var modelCatalogs: [String: ModelCatalog] = [:]
+    var isLoadingModelCatalog = false
+    var modelCatalogError: String?
+
+    var currentCatalog: ModelCatalog? {
+        modelCatalogs[providerSettings.provider.rawValue]
+    }
+
+    func loadModelCatalog() {
+        let provider = providerSettings.provider
+        isLoadingModelCatalog = true
+        modelCatalogError = nil
+        Task {
+            do {
+                let catalog = try await ModelCatalogService.fetch(provider: provider)
+                modelCatalogs[provider.rawValue] = catalog
+                isLoadingModelCatalog = false
+            } catch {
+                modelCatalogError = error.localizedDescription
+                isLoadingModelCatalog = false
+            }
+        }
+    }
+
+    func transcriptionModelOptions() -> [String] {
+        modelOptionList(
+            catalog: currentCatalog?.transcription ?? [],
+            current: providerSettings.currentTranscriptionModel,
+            fallback: providerSettings.provider.defaultTranscriptionModel
+        )
+    }
+
+    func formattingModelOptions() -> [String] {
+        modelOptionList(
+            catalog: currentCatalog?.chat ?? [],
+            current: providerSettings.currentFormattingModel,
+            fallback: providerSettings.provider.defaultFormattingModel
+        )
+    }
+
+    private func modelOptionList(catalog: [String], current: String, fallback: String) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for model in [current, fallback] + catalog {
+            let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
     }
 
     /// Words hinted to the transcription model (dictionary + any legacy custom terms).
@@ -86,12 +146,14 @@ final class AppState {
     }
 
     init() {
-        self.appSettings = Self.loadAppSettings()
+        let loadedAppSettings = Self.loadAppSettings()
+        self.appSettings = loadedAppSettings
         self.transcriptionSettings = Self.loadTranscriptionSettings()
         self.textImprovementSettings = Self.loadTextImprovementSettings()
         self.dampfAblassenSettings = Self.loadDampfAblassenSettings()
         self.emojiTextSettings = Self.loadEmojiTextSettings()
         self.dictionarySettings = Self.loadDictionarySettings()
+        self.providerSettings = Self.loadProviderSettings(legacyAppSettings: loadedAppSettings)
 
         // One-time migration: fold legacy "Eigennamen" (customTerms) into the dictionary.
         if dictionarySettings.entries.isEmpty, !textImprovementSettings.customTerms.isEmpty {
@@ -133,8 +195,8 @@ final class AppState {
                     : "Lokales WhisperKit-Modell fehlt."
             }
             return appSettings.smartFormattingEnabled
-                ? "Online: Whisper + Llama (OpenRouter)."
-                : "Online: Whisper über OpenRouter."
+                ? "Online: Transkription + Llama (\(providerSettings.provider.displayName))."
+                : "Online: Transkription über \(providerSettings.provider.displayName)."
         case .localTranscription:
             return "Nur lokal. Kein Server."
         case .textImprover, .dampfAblassen, .emojiText:
@@ -190,17 +252,25 @@ final class AppState {
 
         let vocabulary = dictionaryVocabulary
         let dictionary = dictionarySettings.entries
+        let provider = providerSettings.provider
+        let transcriptionModel = providerSettings.currentTranscriptionModel
+        let formattingModel = providerSettings.currentFormattingModel
 
         switch type {
         case .transcription:
+            let useLocal = appSettings.secureLocalModeEnabled
+            // In local mode, only run cloud formatting if the user opted in (text then leaves the device).
+            let runFormatting = appSettings.smartFormattingEnabled
+                && (!useLocal || providerSettings.formatLocalTranscription)
             let workflow = TranscriptionWorkflow(
                 customTerms: vocabulary,
                 language: transcriptionSettings.language,
-                backend: appSettings.secureLocalModeEnabled ? .local : .remote,
+                backend: useLocal ? .local : .remote,
                 localModelName: selectedLocalModelName,
-                transcriptionModel: appSettings.transcriptionModel,
-                formattingModel: appSettings.formattingModel,
-                smartFormat: appSettings.smartFormattingEnabled,
+                provider: provider,
+                transcriptionModel: transcriptionModel,
+                formattingModel: formattingModel,
+                smartFormat: runFormatting,
                 formatSettings: textImprovementSettings,
                 contextApp: contextApp,
                 dictionary: dictionary
@@ -216,8 +286,9 @@ final class AppState {
                 language: transcriptionSettings.language,
                 backend: .local,
                 localModelName: selectedLocalModelName,
-                transcriptionModel: appSettings.transcriptionModel,
-                formattingModel: appSettings.formattingModel
+                provider: provider,
+                transcriptionModel: transcriptionModel,
+                formattingModel: formattingModel
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -227,8 +298,9 @@ final class AppState {
             let workflow = TextImprovementWorkflow(
                 settings: textImprovementSettings,
                 language: transcriptionSettings.language,
-                transcriptionModel: appSettings.transcriptionModel,
-                formattingModel: appSettings.formattingModel,
+                provider: provider,
+                transcriptionModel: transcriptionModel,
+                formattingModel: formattingModel,
                 vocabulary: vocabulary,
                 dictionary: dictionary
             )
@@ -241,8 +313,9 @@ final class AppState {
                 settings: dampfAblassenSettings,
                 customTerms: vocabulary,
                 language: transcriptionSettings.language,
-                transcriptionModel: appSettings.transcriptionModel,
-                formattingModel: appSettings.formattingModel
+                provider: provider,
+                transcriptionModel: transcriptionModel,
+                formattingModel: formattingModel
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -253,8 +326,9 @@ final class AppState {
                 settings: emojiTextSettings,
                 customTerms: vocabulary,
                 language: transcriptionSettings.language,
-                transcriptionModel: appSettings.transcriptionModel,
-                formattingModel: appSettings.formattingModel
+                provider: provider,
+                transcriptionModel: transcriptionModel,
+                formattingModel: formattingModel
             )
             configureWorkflowHandlers(workflow)
             activeWorkflow = workflow
@@ -271,9 +345,9 @@ final class AppState {
         case .transcription:
             return appSettings.secureLocalModeEnabled
                 ? selectedLocalModelIsInstalled
-                : KeychainService.isConfigured
+                : providerConfigured
         case .textImprover, .dampfAblassen, .emojiText:
-            return !appSettings.secureLocalModeEnabled && KeychainService.isConfigured
+            return !appSettings.secureLocalModeEnabled && providerConfigured
         }
     }
 
@@ -422,7 +496,8 @@ final class AppState {
             textImprovement: textImprovementSettings,
             dampfAblassen: dampfAblassenSettings,
             emojiText: emojiTextSettings,
-            dictionary: dictionarySettings
+            dictionary: dictionarySettings,
+            providers: providerSettings
         )
         if let data = try? JSONEncoder().encode(container) {
             try? data.write(to: Self.settingsURL)
@@ -451,6 +526,17 @@ final class AppState {
 
     private static func loadDictionarySettings() -> DictionarySettings {
         loadContainer()?.dictionary ?? DictionarySettings()
+    }
+
+    private static func loadProviderSettings(legacyAppSettings: AppSettings) -> ProviderSettings {
+        if let stored = loadContainer()?.providers {
+            return stored
+        }
+        // First run after the provider update: seed OpenRouter models from legacy fields.
+        var seeded = ProviderSettings()
+        seeded.openRouterTranscriptionModel = legacyAppSettings.transcriptionModel
+        seeded.openRouterFormattingModel = legacyAppSettings.formattingModel
+        return seeded
     }
 
     private static func loadContainer() -> SettingsContainer? {
@@ -655,6 +741,7 @@ private struct SettingsContainer: Codable {
     var dampfAblassen: DampfAblassenSettings?
     var emojiText: EmojiTextSettings?
     var dictionary: DictionarySettings?
+    var providers: ProviderSettings?
 }
 
 // MARK: - Notification for Popover Dismissal

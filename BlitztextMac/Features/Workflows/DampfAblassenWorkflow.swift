@@ -16,6 +16,7 @@ final class DampfAblassenWorkflow: Workflow {
     private let settings: DampfAblassenSettings
     private let customTerms: [String]
     private let language: String
+    private let provider: AIProvider
     private let transcriptionModel: String
     private let formattingModel: String
     private var processingTask: Task<Void, Never>?
@@ -24,12 +25,14 @@ final class DampfAblassenWorkflow: Workflow {
         settings: DampfAblassenSettings,
         customTerms: [String] = [],
         language: String = "de",
-        transcriptionModel: String = OpenRouterConfig.defaultTranscriptionModel,
-        formattingModel: String = OpenRouterConfig.defaultFormattingModel
+        provider: AIProvider = .openRouter,
+        transcriptionModel: String = AIProvider.openRouter.defaultTranscriptionModel,
+        formattingModel: String = AIProvider.openRouter.defaultFormattingModel
     ) {
         self.settings = settings
         self.customTerms = customTerms
         self.language = language
+        self.provider = provider
         self.transcriptionModel = transcriptionModel
         self.formattingModel = formattingModel
     }
@@ -97,6 +100,7 @@ final class DampfAblassenWorkflow: Workflow {
                     audioURL: url,
                     customTerms: vocabularyHints,
                     language: language,
+                    provider: provider,
                     model: transcriptionModel
                 )
                 let cleanedRawText = TranscriptionQualityService.cleanedTranscript(rawText)
@@ -113,6 +117,7 @@ final class DampfAblassenWorkflow: Workflow {
                 let answer = try await LLMService.dampfAblassen(
                     text: cleanedRawText,
                     systemPrompt: settings.systemPrompt,
+                    provider: provider,
                     model: formattingModel
                 )
                 let cleanedAnswer = TranscriptionQualityService.cleanedTranscript(answer)
