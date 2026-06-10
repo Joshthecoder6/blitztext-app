@@ -777,63 +777,13 @@ struct CustomizeSettingsView: View {
                 }
             }
 
-            // MARK: Wörterbuch
-            VStack(alignment: .leading, spacing: 10) {
+            // MARK: Wörterbuch (eigener Punkt – Hinweis)
+            VStack(alignment: .leading, spacing: 6) {
                 SectionLabel(text: "W\u{00F6}rterbuch")
-
-                Text("Eigennamen, Fachbegriffe und Ersetzungen. \u{201E}Geschrieben\u{201C} leer lassen = nur die korrekte Schreibweise erzwingen. Ausgef\u{00FC}llt = ersetzen (gesprochen \u{2192} geschrieben).")
+                Text("Das W\u{00F6}rterbuch ist ein eigener Punkt: Buch-Symbol oben in der Men\u{00FC}leiste \u{2192} \u{201E}W\u{00F6}rterbuch\u{201C}.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-
-                if appState.dictionarySettings.entries.isEmpty {
-                    Text("Noch keine Eintr\u{00E4}ge.")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.tertiary)
-                }
-
-                ForEach($appState.dictionarySettings.entries) { $entry in
-                    HStack(spacing: 6) {
-                        TextField("Gesprochen", text: $entry.spoken)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 11))
-
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-
-                        TextField("Geschrieben (optional)", text: $entry.written)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 11))
-
-                        Button {
-                            let id = entry.id
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                appState.dictionarySettings.entries.removeAll { $0.id == id }
-                            }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(SubtleButtonStyle())
-                    }
-                }
-
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        appState.dictionarySettings.entries.append(DictionaryEntry())
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 14))
-                            .foregroundStyle(.blue.opacity(0.7))
-                        Text("Eintrag hinzuf\u{00FC}gen")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                }
-                .buttonStyle(SubtleButtonStyle())
             }
 
         }

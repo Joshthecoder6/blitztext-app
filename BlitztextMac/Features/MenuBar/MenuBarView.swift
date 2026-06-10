@@ -14,6 +14,8 @@ struct MenuBarView: View {
                 settingsPage
             case .workflow:
                 workflowPage
+            case .dictionary:
+                dictionaryPage
             }
         }
         .frame(width: 340)
@@ -40,11 +42,11 @@ struct MenuBarView: View {
 
                     Spacer()
 
-                    Button {
-                        appState.page = .settings
-                    } label: {
-                        ZStack(alignment: .topTrailing) {
-                            Image(systemName: "gear")
+                    HStack(spacing: 2) {
+                        Button {
+                            appState.page = .dictionary
+                        } label: {
+                            Image(systemName: "character.book.closed")
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(.tertiary)
                                 .frame(width: 28, height: 28)
@@ -53,16 +55,35 @@ struct MenuBarView: View {
                                         .fill(Color.primary.opacity(0.00001)) // hit target
                                 )
                                 .contentShape(Rectangle())
+                        }
+                        .buttonStyle(SubtleButtonStyle())
+                        .help("Wörterbuch")
 
-                            if !appState.accessibilityPermissionGranted {
-                                Circle()
-                                    .fill(Color.orange)
-                                    .frame(width: 6, height: 6)
-                                    .offset(x: -4, y: 4)
+                        Button {
+                            appState.page = .settings
+                        } label: {
+                            ZStack(alignment: .topTrailing) {
+                                Image(systemName: "gear")
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                                    .frame(width: 28, height: 28)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(Color.primary.opacity(0.00001)) // hit target
+                                    )
+                                    .contentShape(Rectangle())
+
+                                if !appState.accessibilityPermissionGranted {
+                                    Circle()
+                                        .fill(Color.orange)
+                                        .frame(width: 6, height: 6)
+                                        .offset(x: -4, y: 4)
+                                }
                             }
                         }
+                        .buttonStyle(SubtleButtonStyle())
+                        .help("Einstellungen")
                     }
-                    .buttonStyle(SubtleButtonStyle())
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -501,6 +522,50 @@ struct MenuBarView: View {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.orange.opacity(0.12), lineWidth: 0.5)
         )
+    }
+
+    // MARK: - Dictionary Page
+
+    private var dictionaryPage: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    appState.page = .main
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Zur\u{00FC}ck")
+                            .font(.system(size: 12))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(SubtleButtonStyle())
+
+                Spacer()
+
+                HStack(spacing: 5) {
+                    Image(systemName: "character.book.closed")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.blue)
+                    Text("W\u{00F6}rterbuch")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+
+                Spacer()
+                Color.clear.frame(width: 58, height: 18)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            DictionaryView(appState: appState)
+
+            Spacer(minLength: 0)
+
+            appFooter
+        }
     }
 
     // MARK: - Settings Page

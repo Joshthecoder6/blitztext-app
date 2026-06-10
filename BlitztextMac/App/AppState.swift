@@ -7,6 +7,7 @@ enum PopoverPage: Equatable {
     case onboarding
     case settings
     case workflow
+    case dictionary
 }
 
 @Observable
